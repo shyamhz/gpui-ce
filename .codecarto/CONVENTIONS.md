@@ -49,24 +49,39 @@ Optional:
 
 ---
 
-## C01. <Title>
+## C01. Evidence-tagged claims with file cites
 
-<!-- Lead with the rule itself. -->
+Every load-bearing finding carries one evidence tag — `observed fact`,
+`strong inference`, `external-behavior claim`, `portability hazard`, or
+`open question` — plus the file path (and line where it matters) that
+supports it. Unverifiable-by-reading claims stay unsettled: no settled
+action is asserted from an `open question` or `external-behavior claim`
+without runtime evidence.
 
-**Why:**
+**Why:** A reimplementation in another language must re-verify each
+architectural claim without re-reading 217K LOC of Rust. Bare assertions
+rot; tagged claims with cites let a later session check exactly the
+supporting source. A four-phase failure in this framework's history came
+from a mislabeled question suppressing verification for every later phase.
 
-**How to apply:**
+**How to apply:** Tag every load-bearing claim in every findings document.
+`observed fact` = direct statement from docs, tests, schemas, types, or
+code. `strong inference` = architectural conclusion from multiple facts.
+`external-behavior claim` = behavior of a system outside this source tree
+(OS, GPU, driver); stays unsettled until a runtime probe or that system's
+own source confirms it. `portability hazard` = assumption tied to Rust,
+runtime, OS, or third-party SDKs. `open question` = missing or conflicting
+behavior still needing evidence. The pairing rule is mechanical: unsettled
+evidence never carries a settled action.
 
-**Current implementers:**
+**Current implementers:** All six architecture findings
+(`findings/architecture/architecture-map.md` + 5 secondary outputs);
+defect-scan-mechanical findings (evidence tags on every finding row).
 
-**Source:**
+**Source:** Architecture closeout `2026-11-21-architecture` (proposed
+convention); mechanical findings applied it; orchestrator confirmed it
+generalizes to all future phases at the contracts boundary, 2026-11-22.
 
 ---
 
 <!-- Repeat the C<NN> block for each convention. Number sequentially. -->
-
-## Pending proposals
-
-Staged by completion from each phase handoff's `proposed_conventions`. The orchestrator promotes an entry into a numbered convention above (or removes it with a note) at the phase boundary — see GUIDE.md §Roles.
-- **evidence-tagged claims with file cites** (architecture, 2026-11-21) — Tag every load-bearing finding observed fact, strong inference, external-behavior claim, portability hazard, or open question, and cite the file path that supports it.
-  - Evidence: Applied across all six architecture findings so a later port can re-verify each claim without re-reading the repo.
