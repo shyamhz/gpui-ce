@@ -26,17 +26,21 @@ thinnest on the animation/motion core, which is user-visible behavior, not plumb
 
 1. **INCORRECT — `PlatformInput` variant count.** `runtime-lifecycle.md` says 17 variants;
    the enum has **14** (`interactive.rs:771-800`, counted).
+
 2. **INCORRECT — `Platform` trait method count.** `public-surfaces.md` says "~90 methods";
    brace-matched count is **74** (`platform.rs:151-386`). The methods past line 386
    (`id`, `uuid`, `bounds`, …) belong to sibling traits such as `PlatformDisplay`.
+
 3. **MISLEADING — "channel-based `update()`".** Architecture map §Concurrency Model implies
    cross-thread hops go through a channel-based `update()`. `ApplicationHandle::update`
    (`app.rs:204`) only borrows the main-thread `Rc<AppCell>`; the cross-thread path is
    `AsyncApp` (weak handle, `app.rs:210-215`). Same-thread vs cross-thread hops are
    distinct mechanisms — the sentence conflates them.
+
 4. **MISLEADING — "worker pool via smol-like async-task".** `scheduler.rs:200` spawns
    plain OS threads (`std::thread::Builder`, `wasm_thread` on wasm); `async-task`
    provides only the `Runnable`/task abstraction. There is no smol executor in the pool.
+
 5. Minor: the MSRV cite `root Cargo.toml:29,95` conflates the workspace file with
    `crates/gpui/Cargo.toml:95` (`rust-version = "1.95"`). The MSRV 1.95 fact itself is
    correct (CHANGELOG, justfile, CI).
@@ -50,14 +54,17 @@ thinnest on the animation/motion core, which is user-visible behavior, not plumb
    from the changelog but never the spring-physics timing model. Timing curves are
    user-visible behavior any port must reproduce; the code is pure computation, no
    runtime needed.
+
 2. **Layer-shell + popup surface roles — can wait.** `platform/layer_shell.rs`
    (`Layer::{Background,Bottom,Top,Overlay}`) and `platform/popup.rs` were never
    mentioned. Needed only if the port targets Linux desktop overlays/menus; defer
    until a Linux windowing investigation.
+
 3. **Gesture-recognizer design — can wait.** `gestures.rs` documents a portable
    core arena (recognizers compete, winner claims, losers cancel; tap→click,
    pan→scroll, pinch→pinch). Findings list the event names but not the design.
    Matters for touch parity; defer until touch behavior is in scope.
+
 4. Already tracked, no action: keymap file format (blind spot), backend draw
    internals and frame pacing (open questions `q-frame-scheduling`, `q-gpu-fallback`,
    headless parity `q-headless-parity`).

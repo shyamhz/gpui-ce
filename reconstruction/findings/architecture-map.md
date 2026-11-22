@@ -2,9 +2,21 @@
 
 ## System Intent
 
-GPUI-CE is a community-maintained fork of Zed's [GPUI](https://gpui.rs) GPU-accelerated UI framework for Rust, extracted from the Zed editor monorepo into a standalone Cargo workspace so independent applications can build on it (`observed fact`: `README.md:9`, `crates/gpui/README.md:1`). It is a **hybrid immediate- and retained-mode, GPU-accelerated UI framework designed to support a wide variety of applications** (`observed fact`: `crates/gpui/README.md:2-4`). It is pre-1.0 (current version 0.4.0, `observed fact`: workspace `Cargo.toml:36`, `crates/gpui/Cargo.toml:3`) and breaking changes between versions are expected (`observed fact`: `crates/gpui/README.md:6-8`). The fork tracks upstream Zed GPUI via an automated vendor-branch sync (`observed fact`: `scripts/sync-upstream/README.md`, `justfile:537-547`), while diverging deliberately: parley-based text on all platforms, a unified WGSL renderer, Tailwind-style APIs, and a maintained changelog of breaking changes (`observed fact`: `CHANGELOG.md:59-265`).
+GPUI-CE is a community-maintained fork of Zed's [GPUI](https://gpui.rs) GPU-accelerated UI framework
+for Rust, extracted from the Zed editor monorepo into a standalone Cargo workspace so independent
+applications can build on it (`observed fact`: `README.md:9`, `crates/gpui/README.md:1`). It is a
+**hybrid immediate- and retained-mode, GPU-accelerated UI framework designed to support a wide
+variety of applications** (`observed fact`: `crates/gpui/README.md:2-4`). It is pre-1.0 (current
+version 0.4.0, `observed fact`: workspace `Cargo.toml:36`, `crates/gpui/Cargo.toml:3`) and breaking
+changes between versions are expected (`observed fact`: `crates/gpui/README.md:6-8`). The fork
+tracks upstream Zed GPUI via an automated vendor-branch sync (`observed fact`:
+`scripts/sync-upstream/README.md`, `justfile:537-547`), while diverging deliberately: parley-based
+text on all platforms, a unified WGSL renderer, Tailwind-style APIs, and a maintained changelog of
+breaking changes (`observed fact`: `CHANGELOG.md:59-265`).
 
-In language-independent terms: think "a retained scene-graph UI toolkit with a React-like declarative layer, an Elm-like typed message/action system, and a retained GPU scene that is rebuilt every frame" — the porting target is that architecture, not the Rust syntax.
+In language-independent terms: think "a retained scene-graph UI toolkit with a React-like
+declarative layer, an Elm-like typed message/action system, and a retained GPU scene that is rebuilt
+every frame" — the porting target is that architecture, not the Rust syntax.
 
 ## Layer Map
 
@@ -37,64 +49,216 @@ In language-independent terms: think "a retained scene-graph UI toolkit with a R
 | `gpui_ce_util` (package `gpui_util`) | `core semantics` | `arc_cow::ArcCow`, `ResultExt`, `defer` | (leaf) | New small CE-owned utilities (split from the vendored Zed set) |
 | `tooling/perf` | `product shell` | `tooling/perf` binary (`main.rs`, `implementation.rs`) | workspace | Perf-measurement harness for the framework itself |
 
-Role notes: every `gpui_*` directory publishes under a `gpui_ce_*` package name (`observed fact`: `[package] name` fields, e.g. `gpui_ce_platform`, `gpui-ce-fonts`) — the rename reserves the `gpui` namespace and marks the fork. `gpui` itself publishes as `gpui-ce`.
+Role notes: every `gpui_*` directory publishes under a `gpui_ce_*` package name (`observed fact`:
+`[package] name` fields, e.g. `gpui_ce_platform`, `gpui-ce-fonts`) — the rename reserves the `gpui`
+namespace and marks the fork. `gpui` itself publishes as `gpui-ce`.
 
 ### Dependency Direction
 
-The stable base is the **leaf-utility layer**: `gpui_collections`, `gpui_path`, `gpui_refineable` (+derive), `gpui_shared_string`, `gpui_ce_util`, `gpui_scheduler`, `gpui_sum_tree` depend on nothing in the workspace (only external crates). `gpui_ce_zed_util` sits one step up (depends on `gpui_ce_util` + `gpui_ce_path`).
+The stable base is the **leaf-utility layer**: `gpui_collections`, `gpui_path`, `gpui_refineable`
+(+derive), `gpui_shared_string`, `gpui_ce_util`, `gpui_scheduler`, `gpui_sum_tree` depend on nothing
+in the workspace (only external crates). `gpui_ce_zed_util` sits one step up (depends on
+`gpui_ce_util` + `gpui_ce_path`).
 
-**`gpui` (core) depends only on leaves + `gpui_macros`** (`observed fact`: `crates/gpui/Cargo.toml` `[dependencies]` lists `gpui_macros`, `gpui_shared_string`, workspace leaves; no `gpui_platform`/`gpui_render`/backend crates in normal deps). Everything platform- or GPU-specific lives *outside* core behind traits core defines: `Platform`, `PlatformWindow`, `PlatformDisplay`, `PlatformTextSystem`, `PlatformKeyboardLayout/Mapper`, `PlatformInputHandler` (`observed fact`: `crates/gpui/src/platform.rs:151-411` trait method list).
+**`gpui` (core) depends only on leaves + `gpui_macros`** (`observed fact`: `crates/gpui/Cargo.toml`
+`[dependencies]` lists `gpui_macros`, `gpui_shared_string`, workspace leaves; no
+`gpui_platform`/`gpui_render`/backend crates in normal deps). Everything platform- or GPU-specific
+lives *outside* core behind traits core defines: `Platform`, `PlatformWindow`, `PlatformDisplay`,
+`PlatformTextSystem`, `PlatformKeyboardLayout/Mapper`, `PlatformInputHandler` (`observed fact`:
+`crates/gpui/src/platform.rs:151-411` trait method list).
 
-The next ring — `gpui_platform`, `gpui_macos`, `gpui_apple`, `gpui_linux`, `gpui_windows`, `gpui_web`, `gpui_render`, `gpui_wgpu`, `gpui_ce_parley`, `gpui_elements`, `gpui_media`, `gpui_tokio` — **all depend on `gpui`** (`observed fact`: each crate's `Cargo.toml`; e.g. `gpui_render` → `gpui` path dep, `gpui_platform` → `gpui`). `gpui_platform` is the facade that re-exports `gpui::Platform` and selects the per-OS implementation with `#[cfg]` (`observed fact`: `crates/gpui_platform/src/gpui_platform.rs:56-94`, `current_platform()`), so applications depend on `gpui` + `gpui_platform` and never `cfg`-gate themselves (`observed fact`: `crates/gpui/README.md:12-26`).
+The next ring — `gpui_platform`, `gpui_macos`, `gpui_apple`, `gpui_linux`, `gpui_windows`,
+`gpui_web`, `gpui_render`, `gpui_wgpu`, `gpui_ce_parley`, `gpui_elements`, `gpui_media`,
+`gpui_tokio` — **all depend on `gpui`** (`observed fact`: each crate's `Cargo.toml`; e.g.
+`gpui_render` → `gpui` path dep, `gpui_platform` → `gpui`). `gpui_platform` is the facade that
+re-exports `gpui::Platform` and selects the per-OS implementation with `#[cfg]` (`observed fact`:
+`crates/gpui_platform/src/gpui_platform.rs:56-94`, `current_platform()`), so applications depend on
+`gpui` + `gpui_platform` and never `cfg`-gate themselves (`observed fact`:
+`crates/gpui/README.md:12-26`).
 
-**Cycles:** there is exactly one, and it is dev-only and legal: `gpui`'s `[dev-dependencies]` include `gpui_platform` (line 162) while `gpui_platform`'s `[dependencies]` include `gpui` — Cargo permits cycles through dev-dependencies, and this one exists so core tests/examples exercise the real platform (`strong inference`: placement of the dep under `[dev-dependencies]` plus per-OS `test-support` dev-deps in `gpui_platform`). The `wayland = ["gpui_platform/wayland"]` feature entries in `crates/gpui/Cargo.toml:37-38` likewise only take effect for test/example builds. No production (`[dependencies]`) cycle was found (`observed fact`: grep over `crates/gpui/Cargo.toml`).
+**Cycles:** there is exactly one, and it is dev-only and legal: `gpui`'s `[dev-dependencies]`
+include `gpui_platform` (line 162) while `gpui_platform`'s `[dependencies]` include `gpui` — Cargo
+permits cycles through dev-dependencies, and this one exists so core tests/examples exercise the
+real platform (`strong inference`: placement of the dep under `[dev-dependencies]` plus per-OS
+`test-support` dev-deps in `gpui_platform`). The `wayland = ["gpui_platform/wayland"]` feature
+entries in `crates/gpui/Cargo.toml:37-38` likewise only take effect for test/example builds. No
+production (`[dependencies]`) cycle was found (`observed fact`: grep over `crates/gpui/Cargo.toml`).
 
-Feature flags carve the platform matrix without multiplying crates: `gpui/wayland`, `gpui/x11` toggle the corresponding `gpui_platform` backends so Linux can target either or both (`observed fact`: `CHANGELOG.md:19-20`, `crates/gpui_linux/Cargo.toml` feature split); `gpui_macos/wgpu` swaps Metal for the shared WGPU renderer; `screen-capture`, `test-support`, `bench-support`, `inspector`, `hot-patching`, `leak-detection` gate optional subsystems (`observed fact`: feature tables in `crates/gpui/Cargo.toml:14-54` and per-crate manifests).
+Feature flags carve the platform matrix without multiplying crates: `gpui/wayland`, `gpui/x11`
+toggle the corresponding `gpui_platform` backends so Linux can target either or both
+(`observed fact`: `CHANGELOG.md:19-20`, `crates/gpui_linux/Cargo.toml` feature split);
+`gpui_macos/wgpu` swaps Metal for the shared WGPU renderer; `screen-capture`, `test-support`,
+`bench-support`, `inspector`, `hot-patching`, `leak-detection` gate optional subsystems
+(`observed fact`: feature tables in `crates/gpui/Cargo.toml:14-54` and per-crate manifests).
 
 ## Public Surfaces
 
-Full catalog with per-item detail lives in `findings/public-surfaces/public-surfaces.md` (secondary output). Summary of load-bearing surfaces:
+Full catalog with per-item detail lives in `findings/public-surfaces/public-surfaces.md` (secondary
+output). Summary of load-bearing surfaces:
 
-- **Rust library API (`gpui` crate).** The whole framework is a library; there is no binary, no socket, no RPC of its own (`observed fact`: `crates/gpui/Cargo.toml` `[lib]`, no `[[bin]]`). Applications enter through `gpui_platform::application()` → `Application::run(launch_callback)` → `App::open_window(options, build_root_view)` (`observed fact`: `gpui_platform.rs:18-54`, `app.rs:327`, `app.rs:1558`).
-- **Declarative element API.** `div()` + builder chain (`.flex()`, `.gap_2()`, `.bg()`, `.on_click()`, …), `canvas`, `img`/`svg`, `uniform_list`, `deferred`, `surface`, `list` (`observed fact`: `crates/gpui/src/elements/`, `README.md:15-116`). Views are `Entity<T: Render>`; stateless pieces are `RenderOnce`; element-scoped state via `use_state` (`observed fact`: `element.rs:385-466`, `examples/learn/creating_components.rs:1-40`).
-- **Action/keybinding system.** `actions!` declares zero-data actions; `#[derive(Action)]` declares data-carrying ones; `KeyBinding::new(keystrokes, action, context)` maps keys; `InteractiveElement::on_action` handles them; focus + key-context tree drives dispatch (`observed fact`: `action.rs:15-110`, `crates/gpui/examples/learn/actions_and_keybinds.rs`).
-- **Async/task API.** `cx.spawn` (foreground), `cx.background_executor().spawn` (Send futures), `Task<T>` with `.detach()`, `cx.notify()`/`emit()`/`observe()`/`subscribe()` for the observer graph (`observed fact`: `executor.rs:68-129,359-390`, `app.rs:1314`, `app.rs:1430`, `context.rs:146-256,416,1145`).
-- **Platform trait surface (~90 methods).** Window management, run loop, menus, clipboard (incl. async + primary/find pasteboards), credentials/keychain, file prompts, URL schemes, notifications, thermal state, haptics, keyboard layout, screen capture (gated), app identity/restart — all behind `dyn Platform` so backends are swappable (`observed fact`: `platform.rs:151-411`).
-- **GPU scene API.** `Window::paint_quad/paint_path/paint_image/paint_drop_shadows/paint_backdrop_filter/paint_layer…`, `Surface` API for custom shaders (`observed fact`: `window.rs:4439-4774`, `CHANGELOG.md` "Surface API for custom shaders" #237). Scenes compile to a `ScenePlan` (`scene/plan.rs`) consumed per-backend.
-- **Text API.** `TextSystem` façade over `Arc<dyn PlatformTextSystem>`; `ShapedLine`/`LineLayout`; single Parley implementation (`ParleyTextSystem`) on all platforms since #267 (`observed fact`: `text_system.rs:14-34`, `CHANGELOG.md` breaking change #267).
-- **Accessibility.** accesskit integration: per-frame `a11y_tree()`, node bounds, forced generation, programmatic actions, aria attributes on interactive elements (`observed fact`: `window.rs:7216-7268`, `CHANGELOG.md` #233/#234/#274/#279/#293).
-- **Outbound-only I/O traits.** `HttpClient::get` (with `NullHttpClient` default; web backend supplies fetch) and `AssetSource`/`AssetRegistry` for bundled/on-demand assets — the framework makes no inbound network surface (`observed fact`: `http_client.rs:13-25`, `assets.rs:22-31`).
-- **File/persistent artifacts owned by the framework:** none at the app level (it is a library). It *reads* system fonts, images (`png/gif/webp` by default; `image-default-formats` flag), SVG via resvg/usvg, cursor themes (`XCURSOR_PATH`), locale (`LC_CTYPE`).
+- **Rust library API (`gpui` crate).** The whole framework is a library; there is no binary, no
+  socket, no RPC of its own (`observed fact`: `crates/gpui/Cargo.toml` `[lib]`, no `[[bin]]`).
+  Applications enter through `gpui_platform::application()` → `Application::run(launch_callback)` →
+  `App::open_window(options, build_root_view)` (`observed fact`: `gpui_platform.rs:18-54`,
+  `app.rs:327`, `app.rs:1558`).
+
+- **Declarative element API.** `div()` + builder chain (`.flex()`, `.gap_2()`, `.bg()`,
+  `.on_click()`, …), `canvas`, `img`/`svg`, `uniform_list`, `deferred`, `surface`, `list`
+  (`observed fact`: `crates/gpui/src/elements/`, `README.md:15-116`). Views are `Entity<T: Render>`;
+  stateless pieces are `RenderOnce`; element-scoped state via `use_state` (`observed fact`:
+  `element.rs:385-466`, `examples/learn/creating_components.rs:1-40`).
+
+- **Action/keybinding system.** `actions!` declares zero-data actions; `#[derive(Action)]` declares
+  data-carrying ones; `KeyBinding::new(keystrokes, action, context)` maps keys;
+  `InteractiveElement::on_action` handles them; focus + key-context tree drives dispatch
+  (`observed fact`: `action.rs:15-110`, `crates/gpui/examples/learn/actions_and_keybinds.rs`).
+
+- **Async/task API.** `cx.spawn` (foreground), `cx.background_executor().spawn` (Send futures),
+  `Task<T>` with `.detach()`, `cx.notify()`/`emit()`/`observe()`/`subscribe()` for the observer
+  graph (`observed fact`: `executor.rs:68-129,359-390`, `app.rs:1314`, `app.rs:1430`,
+  `context.rs:146-256,416,1145`).
+
+- **Platform trait surface (~90 methods).** Window management, run loop, menus, clipboard (incl.
+  async + primary/find pasteboards), credentials/keychain, file prompts, URL schemes, notifications,
+  thermal state, haptics, keyboard layout, screen capture (gated), app identity/restart — all behind
+  `dyn Platform` so backends are swappable (`observed fact`: `platform.rs:151-411`).
+
+- **GPU scene API.**
+  `Window::paint_quad/paint_path/paint_image/paint_drop_shadows/paint_backdrop_filter/paint_layer…`,
+  `Surface` API for custom shaders (`observed fact`: `window.rs:4439-4774`, `CHANGELOG.md` "Surface
+  API for custom shaders" #237). Scenes compile to a `ScenePlan` (`scene/plan.rs`) consumed
+  per-backend.
+
+- **Text API.** `TextSystem` façade over `Arc<dyn PlatformTextSystem>`; `ShapedLine`/`LineLayout`;
+  single Parley implementation (`ParleyTextSystem`) on all platforms since #267 (`observed fact`:
+  `text_system.rs:14-34`, `CHANGELOG.md` breaking change #267).
+
+- **Accessibility.** accesskit integration: per-frame `a11y_tree()`, node bounds, forced generation,
+  programmatic actions, aria attributes on interactive elements (`observed fact`:
+  `window.rs:7216-7268`, `CHANGELOG.md` #233/#234/#274/#279/#293).
+
+- **Outbound-only I/O traits.** `HttpClient::get` (with `NullHttpClient` default; web backend
+  supplies fetch) and `AssetSource`/`AssetRegistry` for bundled/on-demand assets — the framework
+  makes no inbound network surface (`observed fact`: `http_client.rs:13-25`, `assets.rs:22-31`).
+
+- **File/persistent artifacts owned by the framework:** none at the app level (it is a library). It
+  *reads* system fonts, images (`png/gif/webp` by default; `image-default-formats` flag), SVG via
+  resvg/usvg, cursor themes (`XCURSOR_PATH`), locale (`LC_CTYPE`).
 
 ## Runtime Lifecycle
 
-Step-by-step trace with phase detail lives in `findings/runtime-lifecycle/runtime-lifecycle.md` (secondary output). The short version:
+Step-by-step trace with phase detail lives in `findings/runtime-lifecycle/runtime-lifecycle.md`
+(secondary output). The short version:
 
-1. **Boot.** `main()` → `gpui_platform::application()` builds an `Rc<dyn Platform>` for the host OS → `Application::with_platform` → `Application::run(|cx| …)` hands the closure to `platform.run(...)`, which starts the OS event loop and invokes the launch callback (`observed fact`: `gpui_platform.rs:18-36`, `app.rs:327-345`). `App` construction asserts it runs on the main thread (`observed fact`: `app.rs:945-949`).
-2. **Window creation.** `App::open_window` inserts a `WindowId`, builds the root view via the caller closure, stores it as `window.root`, and forces one synchronous `draw` before returning (a Windows race fix — losing the race crashed on an empty dispatch tree, `observed fact`: `app.rs:1558-1592` comment).
-3. **Frame (draw).** `Window::draw`: drain profiler state → enter per-`App` element arena → `invalidate_entities` → `draw_roots()` rebuilds the element tree by calling `Render::render` down the view hierarchy → `request_layout` (taffy nodes) → `prepaint` → `paint` emits `Primitive`s (Shadow/Quad/Path/Underline/sprites/Surface/BackdropFilter/FilterBoundary) into `Scene` (`observed fact`: `window.rs:3218-3260`, `scene.rs:392-437`) → `ScenePlan` compiled → backend `draw(scene)` presents (Metal `MetalRenderer::draw`, macOS `window.rs:2151`, wgpu `WgpuRenderer`) — then arenas clear and the plan's temporary allocations drop (`strong inference`: `draw()` epilogue + `layout_engine.clear()`, `text_system().finish_frame()`).
-4. **Events.** OS event → `PlatformInput::{KeyDown,…,MouseMove,…,FileDrop,Touch}` (`observed fact`: `interactive.rs:771-800`) → `Window::dispatch_event` → hit-test against `bounds_tree` → element handlers; keystrokes additionally flow through the key-context dispatch tree and `Keymap` into typed `Action`s (`observed fact`: `window.rs:5871`, `key_dispatch.rs:140-327`).
-5. **Scheduling inside a frame.** `pending_effects: VecDeque<Effect>`, dirty-view sets (`dirty_views`, `pending_notifications`), `on_next_frame`/`request_animation_frame` callbacks, deferred content-mask layers — all drained deterministically within `draw` (`observed fact`: `app.rs:857-899`, `window.rs:2682-2712`).
-6. **Shutdown.** `quit_observers` / `QuitHandler`s run; `globals_by_type` drops last so entity tasks cancel before the Tokio runtime shuts down (a wrong order panics, `observed fact`: `app.rs:878-882` comment). Optional leak detection (`leak-detection` feature, `LEAK_BACKTRACE` env) reports leaked entities in test builds.
+1. **Boot.** `main()` → `gpui_platform::application()` builds an `Rc<dyn Platform>` for the host OS
+   → `Application::with_platform` → `Application::run(|cx| …)` hands the closure to
+   `platform.run(...)`, which starts the OS event loop and invokes the launch callback
+   (`observed fact`: `gpui_platform.rs:18-36`, `app.rs:327-345`). `App` construction asserts it runs
+   on the main thread (`observed fact`: `app.rs:945-949`).
+
+2. **Window creation.** `App::open_window` inserts a `WindowId`, builds the root view via the caller
+   closure, stores it as `window.root`, and forces one synchronous `draw` before returning (a
+   Windows race fix — losing the race crashed on an empty dispatch tree, `observed fact`:
+   `app.rs:1558-1592` comment).
+
+3. **Frame (draw).** `Window::draw`: drain profiler state → enter per-`App` element arena →
+   `invalidate_entities` → `draw_roots()` rebuilds the element tree by calling `Render::render` down
+   the view hierarchy → `request_layout` (taffy nodes) → `prepaint` → `paint` emits `Primitive`s
+   (Shadow/Quad/Path/Underline/sprites/Surface/BackdropFilter/FilterBoundary) into `Scene`
+   (`observed fact`: `window.rs:3218-3260`, `scene.rs:392-437`) → `ScenePlan` compiled → backend
+   `draw(scene)` presents (Metal `MetalRenderer::draw`, macOS `window.rs:2151`, wgpu `WgpuRenderer`)
+   — then arenas clear and the plan's temporary allocations drop (`strong inference`: `draw()`
+   epilogue + `layout_engine.clear()`, `text_system().finish_frame()`).
+
+4. **Events.** OS event → `PlatformInput::{KeyDown,…,MouseMove,…,FileDrop,Touch}` (`observed fact`:
+   `interactive.rs:771-800`) → `Window::dispatch_event` → hit-test against `bounds_tree` → element
+   handlers; keystrokes additionally flow through the key-context dispatch tree and `Keymap` into
+   typed `Action`s (`observed fact`: `window.rs:5871`, `key_dispatch.rs:140-327`).
+
+5. **Scheduling inside a frame.** `pending_effects: VecDeque<Effect>`, dirty-view sets
+   (`dirty_views`, `pending_notifications`), `on_next_frame`/`request_animation_frame` callbacks,
+   deferred content-mask layers — all drained deterministically within `draw` (`observed fact`:
+   `app.rs:857-899`, `window.rs:2682-2712`).
+
+6. **Shutdown.** `quit_observers` / `QuitHandler`s run; `globals_by_type` drops last so entity tasks
+   cancel before the Tokio runtime shuts down (a wrong order panics, `observed fact`:
+   `app.rs:878-882` comment). Optional leak detection (`leak-detection` feature, `LEAK_BACKTRACE`
+   env) reports leaked entities in test builds.
 
 ## Concurrency Model
 
-- **Single-threaded core, enforced.** `Application(Rc<AppCell>)`, `AppCell { app: RefCell<App> }`, and `this: Weak<AppCell>` form a main-thread-only ownership graph (`observed fact`: `app.rs:85-87,186,836`). `Rc`/`RefCell` are *not* thread-safe by construction — in language-independent terms: all UI state lives on one thread and shared access panics (Rust `borrow_mut` panics on re-entrant borrows) rather than locking. Cross-thread handles are explicit: `WeakEntity`/`AnyView`, `AsyncApp`/`AsyncWindowContext` snapshots, and channel-based `update()` hops back to the main thread (`strong inference`: `entity_map.rs` `Weak` usage + `app.rs:204` `ApplicationHandle::update`).
-- **Two executors, one scheduler.** `gpui_scheduler` implements both: `BackgroundExecutor` runs `Send` futures on a worker pool; `ForegroundExecutor` runs non-`Send` futures on the main thread, pumped by the platform run loop. `Task<T>` is the join handle (`.detach()` to abandon). Priorities (`Priority`) flow through a 3-lane (high/medium/low) queue with a condvar (`observed fact`: `executor.rs:72-385`, `queue.rs:8-40`, `threaded_dispatcher.rs:1-50`).
-- **Threading matrix.** Production dispatchers are per-platform (`LinuxDispatcher`, macOS dispatch/GCD, Windows, web). `spawn_dedicated` spawns real OS threads — **on wasm it panics at runtime** unless the `wasm-threads` feature is on, which additionally requires shared-memory atomics build flags and swaps flume's mutex for a spinlock (browsers forbid `Atomics.wait` on the main thread) (`observed fact`: root `Cargo.toml` `wasm-threads` comment block). `portability hazard`: this whole threading story (GCD queues, Win32 threads, wasm workers vs shared memory) has no 1:1 translation; a port must re-derive it from the *contract* (main-thread UI + background `Send` pool + main-pump), not the mechanism.
-- **Deterministic testing.** `TestClock` (virtual time from a fixed 2025-07-01 epoch), `TestDispatcher` (single-threaded) vs `ThreadedDispatcher` (production-like pool + timer thread + `run_until_idle`), `TestApp`/`test-support` harness, seeded runs (`SEED` env, `test-with-seed` recipe) (`observed fact`: `scheduler/clock.rs:14-30`, `threaded_dispatcher.rs:17-36`, `headless_app_context.rs:83`, `justfile` `test-with-seed`).
-- **Shared-state primitives.** `parking_lot` locks + condvars in queues/dispatchers; `RefCell` arenas per frame (`element_arena`, `event_arena`); `FxHashMap`/`FxHashSet` (non-cryptographic FxHash — fast but unsalted, `observed fact`: `collections.rs` re-exports rustc-hash) for observer/subscriber tables; atomics only for ids and counters (`EntityId` via slotmap `KeyData`, `observed fact`: `entity_map.rs:32-60`).
+- **Single-threaded core, enforced.** `Application(Rc<AppCell>)`, `AppCell { app: RefCell<App> }`,
+  and `this: Weak<AppCell>` form a main-thread-only ownership graph (`observed fact`:
+  `app.rs:85-87,186,836`). `Rc`/`RefCell` are *not* thread-safe by construction — in
+  language-independent terms: all UI state lives on one thread and shared access panics (Rust
+  `borrow_mut` panics on re-entrant borrows) rather than locking. Cross-thread handles are explicit:
+  `WeakEntity`/`AnyView`, `AsyncApp`/`AsyncWindowContext` snapshots, and channel-based `update()`
+  hops back to the main thread (`strong inference`: `entity_map.rs` `Weak` usage + `app.rs:204`
+  `ApplicationHandle::update`).
+
+- **Two executors, one scheduler.** `gpui_scheduler` implements both: `BackgroundExecutor` runs
+  `Send` futures on a worker pool; `ForegroundExecutor` runs non-`Send` futures on the main thread,
+  pumped by the platform run loop. `Task<T>` is the join handle (`.detach()` to abandon). Priorities
+  (`Priority`) flow through a 3-lane (high/medium/low) queue with a condvar (`observed fact`:
+  `executor.rs:72-385`, `queue.rs:8-40`, `threaded_dispatcher.rs:1-50`).
+
+- **Threading matrix.** Production dispatchers are per-platform (`LinuxDispatcher`, macOS
+  dispatch/GCD, Windows, web). `spawn_dedicated` spawns real OS threads — **on wasm it panics at
+  runtime** unless the `wasm-threads` feature is on, which additionally requires shared-memory
+  atomics build flags and swaps flume's mutex for a spinlock (browsers forbid `Atomics.wait` on the
+  main thread) (`observed fact`: root `Cargo.toml` `wasm-threads` comment block).
+  `portability hazard`: this whole threading story (GCD queues, Win32 threads, wasm workers vs
+  shared memory) has no 1:1 translation; a port must re-derive it from the *contract* (main-thread
+  UI + background `Send` pool + main-pump), not the mechanism.
+
+- **Deterministic testing.** `TestClock` (virtual time from a fixed 2025-07-01 epoch),
+  `TestDispatcher` (single-threaded) vs `ThreadedDispatcher` (production-like pool + timer thread +
+  `run_until_idle`), `TestApp`/`test-support` harness, seeded runs (`SEED` env, `test-with-seed`
+  recipe) (`observed fact`: `scheduler/clock.rs:14-30`, `threaded_dispatcher.rs:17-36`,
+  `headless_app_context.rs:83`, `justfile` `test-with-seed`).
+
+- **Shared-state primitives.** `parking_lot` locks + condvars in queues/dispatchers; `RefCell`
+  arenas per frame (`element_arena`, `event_arena`); `FxHashMap`/`FxHashSet` (non-cryptographic
+  FxHash — fast but unsalted, `observed fact`: `collections.rs` re-exports rustc-hash) for
+  observer/subscriber tables; atomics only for ids and counters (`EntityId` via slotmap `KeyData`,
+  `observed fact`: `entity_map.rs:32-60`).
 
 ## Build and Packaging
 
 Detail lives in `findings/build-and-deploy/build-and-deploy.md` (secondary output). Essentials:
 
-- **Cargo workspace**, resolver v3, edition 2024, **MSRV 1.95.0** (uses `Vec::push_mut`; enforced by `msrv-check` in CI) (`observed fact`: root `Cargo.toml:29,95`, `justfile: msrv`, `ci.yml: msrv`).
-- **Codegen at build time.** `gpui_render`'s build script compiles Rust-authored shader modules (`wgsl-rs`) to WGSL via `naga` and `include!`s them from `OUT_DIR` (`observed fact`: `gpui_render/Cargo.toml` build-deps + `artifacts.rs:1-10`); macOS links a bindgen step (`bindgen 0.72`); Windows embeds a manifest (`embed-resource`, `windows-manual` feature).
-- **Task runner: `justfile`.** `check/build/test` (+`*flags` passthrough), `build-{linux,mac,windows}`, `check-wasm`, `check-wasm-atomics`, `check-examples`, `test-doc`, `test-nextest`, `lint` (= fmt + clippy with `deny` on `todo!`/`dbg!`/`redundant_clone` + typos + machete), `msrv-check`, `ci/ci-test/ci-tidy/ci-wasm`, `release-{version,sync,prepare,check}`, `publishable`, `sync-upstream*` (`observed fact`: `justfile` recipe list, `clippy.toml`, root `[workspace.lints.clippy]`).
-- **CI (`.github/workflows/ci.yml`).** Change-aware orchestration (docs-only PRs skip tests), then `fmt`, `clippy`, `typos`, `lockfile`, `machete` (unused-dep check), `msrv`, `check-wasm`, per-OS `test-{linux,mac,windows}`, `check-examples`. Release trains (`release.yml`, `prerelease.yml`, `release-pr*.yml`, `release-tag.yml`) verify and publish all `gpui_ce_*` crates to crates.io plus GitHub releases; `audit.yml` runs cargo-deny/audit (`observed fact`: workflow job names, `deny.toml`, `audit.toml`).
-- **Supply-chain posture.** `cargo-deny` bans unapproved licenses (allow-list MIT/Apache/BSD/ISC/Zlib/Unicode/0BSD/MPL/CC0/NCSA, with explicit clarifications for `wgsl-rs`), `cargo-audit`, `typos`, flake.nix Nix build (fenix toolchain + crane) (`observed fact`: `deny.toml`, `flake.nix:1-32`).
-- **Upstream-sync machinery.** `scripts/sync-upstream/` implements a vendor-branch 3-way merge preserving upstream commit history, with LLM-driven conflict resolution and verify-fix loops; state in `state.json` (last synced Zed SHA `b1a7ef0…`, 2026-09-03) (`observed fact`: `sync_upstream.py` README, `state.json`). `portability hazard` for a port: none directly — but the port inherits drift risk; pinning to a synced SHA matters.
+- **Cargo workspace**, resolver v3, edition 2024, **MSRV 1.95.0** (uses `Vec::push_mut`; enforced by
+  `msrv-check` in CI) (`observed fact`: root `Cargo.toml:29,95`, `justfile: msrv`, `ci.yml: msrv`).
+
+- **Codegen at build time.** `gpui_render`'s build script compiles Rust-authored shader modules
+  (`wgsl-rs`) to WGSL via `naga` and `include!`s them from `OUT_DIR` (`observed fact`:
+  `gpui_render/Cargo.toml` build-deps + `artifacts.rs:1-10`); macOS links a bindgen step
+  (`bindgen 0.72`); Windows embeds a manifest (`embed-resource`, `windows-manual` feature).
+
+- **Task runner: `justfile`.** `check/build/test` (+`*flags` passthrough),
+  `build-{linux,mac,windows}`, `check-wasm`, `check-wasm-atomics`, `check-examples`, `test-doc`,
+  `test-nextest`, `lint` (= fmt + clippy with `deny` on `todo!`/`dbg!`/`redundant_clone` + typos +
+  machete), `msrv-check`, `ci/ci-test/ci-tidy/ci-wasm`, `release-{version,sync,prepare,check}`,
+  `publishable`, `sync-upstream*` (`observed fact`: `justfile` recipe list, `clippy.toml`, root
+  `[workspace.lints.clippy]`).
+
+- **CI (`.github/workflows/ci.yml`).** Change-aware orchestration (docs-only PRs skip tests), then
+  `fmt`, `clippy`, `typos`, `lockfile`, `machete` (unused-dep check), `msrv`, `check-wasm`, per-OS
+  `test-{linux,mac,windows}`, `check-examples`. Release trains (`release.yml`, `prerelease.yml`,
+  `release-pr*.yml`, `release-tag.yml`) verify and publish all `gpui_ce_*` crates to crates.io plus
+  GitHub releases; `audit.yml` runs cargo-deny/audit (`observed fact`: workflow job names,
+  `deny.toml`, `audit.toml`).
+
+- **Supply-chain posture.** `cargo-deny` bans unapproved licenses (allow-list
+  MIT/Apache/BSD/ISC/Zlib/Unicode/0BSD/MPL/CC0/NCSA, with explicit clarifications for `wgsl-rs`),
+  `cargo-audit`, `typos`, flake.nix Nix build (fenix toolchain + crane) (`observed fact`:
+  `deny.toml`, `flake.nix:1-32`).
+
+- **Upstream-sync machinery.** `scripts/sync-upstream/` implements a vendor-branch 3-way merge
+  preserving upstream commit history, with LLM-driven conflict resolution and verify-fix loops;
+  state in `state.json` (last synced Zed SHA `b1a7ef0…`, 2026-09-03) (`observed fact`:
+  `sync_upstream.py` README, `state.json`). `portability hazard` for a port: none directly — but the
+  port inherits drift risk; pinning to a synced SHA matters.
 
 ## Porting Priorities
 
@@ -116,12 +280,28 @@ Detail lives in `findings/build-and-deploy/build-and-deploy.md` (secondary outpu
 
 ## Durable State
 
-GPUI is a library, not a service: it owns **no config files, no databases, no migration history** (`strong inference`: no config-file readers found outside build tooling; all state is in-process per-`App`). What persists or leaks across runs:
+GPUI is a library, not a service: it owns **no config files, no databases, no migration history**
+(`strong inference`: no config-file readers found outside build tooling; all state is in-process
+per-`App`). What persists or leaks across runs:
 
-- **Environment variables read at runtime** (`observed fact`: grep): `WAYLAND_DISPLAY` / `DISPLAY` (backend selection, `platform.rs:117-122`), `ZED_HEADLESS` (force headless), `XCURSOR_PATH` + `LC_CTYPE` (Linux cursors/locale), `XDG_ACTIVATION_TOKEN` (Wayland activation), `XDG_CURRENT_DESKTOP` (character palette), `GPUI_X11_SCALE_FACTOR_ENV` (X11 DPI), `DISABLE_DIRECT_COMPOSITION` (Windows), `SEED` (deterministic test RNG), `LEAK_BACKTRACE` (leak reports), `GPUI_RUN_UNTIL_PARKED_LOG` (executor tracing). Compile-time: `TRACK_THREAD_BORROWS` (borrow logging).
-- **Caches:** glyph atlas pages in GPU memory (`metal_atlas`, `wgpu_atlas`, `directx_atlas`); Swash font cache keyed by (source, collection face) after #406; font-metrics memo tables in `TextSystem`; `asset_cache`/`AssetRegistry` for bundled assets; per-frame arenas that must drain (`element_arena`, `event_arena`).
-- **Generated artifacts:** `target/` (incl. `OUT_DIR` WGSL), embedded assets via `rust-embed` (`embedded-assets` feature), Windows manifest resources, macOS bindgen output.
-- **Logs:** `env_logger` in tests, `gpui_web::init_logging` (browser console), tracing/profiling journals behind `profiler`.
+- **Environment variables read at runtime** (`observed fact`: grep): `WAYLAND_DISPLAY` / `DISPLAY`
+  (backend selection, `platform.rs:117-122`), `ZED_HEADLESS` (force headless), `XCURSOR_PATH` +
+  `LC_CTYPE` (Linux cursors/locale), `XDG_ACTIVATION_TOKEN` (Wayland activation),
+  `XDG_CURRENT_DESKTOP` (character palette), `GPUI_X11_SCALE_FACTOR_ENV` (X11 DPI),
+  `DISABLE_DIRECT_COMPOSITION` (Windows), `SEED` (deterministic test RNG), `LEAK_BACKTRACE` (leak
+  reports), `GPUI_RUN_UNTIL_PARKED_LOG` (executor tracing). Compile-time: `TRACK_THREAD_BORROWS`
+  (borrow logging).
+
+- **Caches:** glyph atlas pages in GPU memory (`metal_atlas`, `wgpu_atlas`, `directx_atlas`); Swash
+  font cache keyed by (source, collection face) after #406; font-metrics memo tables in
+  `TextSystem`; `asset_cache`/`AssetRegistry` for bundled assets; per-frame arenas that must drain
+  (`element_arena`, `event_arena`).
+
+- **Generated artifacts:** `target/` (incl. `OUT_DIR` WGSL), embedded assets via `rust-embed`
+  (`embedded-assets` feature), Windows manifest resources, macOS bindgen output.
+
+- **Logs:** `env_logger` in tests, `gpui_web::init_logging` (browser console), tracing/profiling
+  journals behind `profiler`.
 
 ## Agent Addressability
 
@@ -141,10 +321,29 @@ GPUI is a library, not a service: it owns **no config files, no databases, no mi
 
 ## Coverage and limits
 
-- Inspected scope: repo root docs (`README`, `CONTRIBUTING`, `SETUP`, `CHANGELOG`, `MAINTENANCE`, `AI_POLICY`), workspace + all 24 crate manifests with feature tables, `justfile`, CI/release workflows, `deny/audit/typos/clippy` configs, `flake.nix`, `scripts/sync-upstream`, `crates/gpui/src/gpui.rs` (full module list + re-exports), `prelude.rs`, `app.rs` (Application/App structs, run/open_window/draw call sites), `window.rs` (draw/dispatch/paint/a11y entry points), `element.rs` (Element/Render/RenderOnce traits), `scene.rs` (Primitive enum), `platform.rs` (Platform trait), `interactive.rs` (PlatformInput), `entity_map.rs` (Entity/slotmap), `executor.rs` + `gpui_scheduler`, `text_system.rs` + parley crate shape, `gpui_render` shader-codegen path, backend crate file lists (macos/apple/linux/windows/web), `gpui_elements`/`gpui_macros`/`gpui_tokio`/util crates, `examples/learn` entry pattern, env-var grep across platform crates.
-- Skipped scope: line-by-line reads of `window.rs` (9.7K LOC), platform backend internals (Win32 proc, NSView delegates, Wayland/X11 protocol code, wasm bindings), full style/styled/taffy mapping, keymap file loading format, gesture/keystroke disambiguation details, profiler/journal internals, `tooling/perf` implementation, doc-site (`docs/`, typst).
+- Inspected scope: repo root docs (`README`, `CONTRIBUTING`, `SETUP`, `CHANGELOG`, `MAINTENANCE`,
+  `AI_POLICY`), workspace + all 24 crate manifests with feature tables, `justfile`, CI/release
+  workflows, `deny/audit/typos/clippy` configs, `flake.nix`, `scripts/sync-upstream`,
+  `crates/gpui/src/gpui.rs` (full module list + re-exports), `prelude.rs`, `app.rs` (Application/App
+  structs, run/open_window/draw call sites), `window.rs` (draw/dispatch/paint/a11y entry points),
+  `element.rs` (Element/Render/RenderOnce traits), `scene.rs` (Primitive enum), `platform.rs`
+  (Platform trait), `interactive.rs` (PlatformInput), `entity_map.rs` (Entity/slotmap),
+  `executor.rs` + `gpui_scheduler`, `text_system.rs` + parley crate shape, `gpui_render`
+  shader-codegen path, backend crate file lists (macos/apple/linux/windows/web),
+  `gpui_elements`/`gpui_macros`/`gpui_tokio`/util crates, `examples/learn` entry pattern, env-var
+  grep across platform crates.
+
+- Skipped scope: line-by-line reads of `window.rs` (9.7K LOC), platform backend internals (Win32
+  proc, NSView delegates, Wayland/X11 protocol code, wasm bindings), full style/styled/taffy
+  mapping, keymap file loading format, gesture/keystroke disambiguation details, profiler/journal
+  internals, `tooling/perf` implementation, doc-site (`docs/`, typst).
+
 - Evidence basis: source inspection only. No code was executed, no tests run, no runtime probed.
-- Known blind spots: exact per-frame ordering guarantees beyond what `draw()` shows (e.g. effect-flush interleavings); Linux frame-pacing implementation; Windows/macOS GPU-recovery paths; keymap deserialization format; performance characteristics (no benchmarks run).
+
+- Known blind spots: exact per-frame ordering guarantees beyond what `draw()` shows (e.g.
+  effect-flush interleavings); Linux frame-pacing implementation; Windows/macOS GPU-recovery paths;
+  keymap deserialization format; performance characteristics (no benchmarks run).
+
 - Coverage disposition: PARTIAL
 
 ## Open Questions
@@ -157,11 +356,14 @@ GPUI is a library, not a service: it owns **no config files, no databases, no mi
 
 ## Carry-Forward
 
-| ID | Target Phase | Description | Deferred Reason |
-|---|---|---|---|
-| | | | |
+| ID  | Target Phase | Description | Deferred Reason |
+| --- | ------------ | ----------- | --------------- |
+|     |              |             |                 |
 
-No carry-forward: the active pipeline (`pipeline-architecture-only.yaml`) contains only the `architecture` phase, so there is no downstream phase to route items to. Genuinely unknown items are recorded above as `open_questions`; a runtime frame-capture spike is proposed as post-pipeline work in the handoff.
+No carry-forward: the active pipeline (`pipeline-architecture-only.yaml`) contains only the
+`architecture` phase, so there is no downstream phase to route items to. Genuinely unknown items are
+recorded above as `open_questions`; a runtime frame-capture spike is proposed as post-pipeline work
+in the handoff.
 
 ---
 
