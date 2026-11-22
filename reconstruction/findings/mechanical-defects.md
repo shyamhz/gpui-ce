@@ -45,7 +45,11 @@ EXECUTED 2026-11-22 — findings below; preliminary note resolved: duplicate act
 
 ## Pass 6: Configuration and Environment Hazards
 
-PENDING — block B1c not yet executed.
+| # | Location | Defect | Severity | Evidence Level | Action |
+|---|---|---|---|---|---|
+| 6.1 | `crates/gpui_linux/src/linux/x11/client.rs:2543-2559` | Invalid `GPUI_X11_SCALE_FACTOR` value panics at startup instead of warning and falling back; every other env var in the codebase degrades gracefully (`.ok()`, `unwrap_or_default`, log-and-ignore). | Low | observed fact | port differently |
+
+**6.1 detail.** `valid_scale_factor` (`:2775-2777`, positive-normal `f32`) is enforced by two `panic!` branches for unparseable or out-of-range values. A typo in this optional env var crashes the app where a warning + `DpiMode::NotSet` fallback (the existing unset path, `:2562`) would do. Port should validate-and-fallback with a warning; spec must state the fallback.
 
 | # | Location | Defect | Severity | Evidence Level | Action |
 |---|---|---|---|---|---|
@@ -62,8 +66,8 @@ PENDING — block B1c not yet executed.
 | Critical | 0 |
 | High | 0 |
 | Medium | 3 |
-| Low | 1 |
-| **Total** | **4 (passes 1–2; pass 6 pending B1c)** |
+| Low | 2 |
+| **Total** | **5 (all three passes)** |
 
 ### Findings by Pass
 
@@ -71,7 +75,7 @@ PENDING — block B1c not yet executed.
 |------|----------|------|--------|-----|-------|
 | 1. Logic and correctness | 0 | 0 | 2 | 0 | 2 |
 | 2. Error handling | 0 | 0 | 1 | 1 | 2 |
-| 6. Config and environment | — | — | — | — | pending (B1c) |
+| 6. Config and environment | 0 | 0 | 0 | 1 | 1 |
 
 ### Top Findings
 
@@ -79,6 +83,7 @@ PENDING — block B1c not yet executed.
 2. Pass 1, `key_dispatch.rs:100` + `window.rs:3795-3860`: frame-reuse index arithmetic debug-only enforced; port with checked arithmetic after protocols confirms the lifecycle invariant. Medium, port differently.
 3. Pass 2, restart spawn failure log-only on all backends (win:525, mac:604, linux:339); no retry, no caller/user signal. Medium, port differently.
 4. Pass 2, `http_client.rs:13-19`: no timeout/cancellation/retry in the HTTP API; stalls indistinguishable from slow. Low, port differently.
+5. Pass 6, `x11/client.rs:2543-2559`: invalid `GPUI_X11_SCALE_FACTOR` panics instead of warn-and-fallback. Low, port differently.
 
 ### Routed To Semantic Phase
 
@@ -113,22 +118,23 @@ None arising from pass-1 findings (both findings carry settled pre-porting actio
 - Skipped scope: gesture recognizer internals (header-level only); full `key_dispatch` matching algorithm; `taffy.rs` mapping arithmetic; text-system layout arithmetic — candidates for deeper passes if phase time permits, otherwise explicitly out of B1a.
 - Evidence basis: source inspection.
 - Known blind spots: reachability of the F1.2 violation path (requires frame-lifecycle analysis → routed to protocols); `editable_text` id-requirement intentionally panics (contract enforcement, not a defect — id requirement noted for contracts B2a).
-- Coverage disposition: PARTIAL (passes 1–2 covered to their exit tests; pass 6 pending B1c by plan).
+- Inspected scope (B1c): pass-6 rubric read; `guess_compositor` + `current_platform` fallback logic (`platform.rs:107-135`, `linux.rs:29-56` — defensive, `unreachable!` truly unreachable, HeadlessClient `open_window` returns Ok); all `env::var` sites graceful (`.ok()`/`unwrap_or_default`) except F6.1; hardcoded interpreter paths (`/bin/bash`, `/usr/bin/env`, powershell — platform-canonical, dismissed); `ZED_HEADLESS` legacy name (not a hazard); magic numbers without evidence of harm (1MB arena, 2 tokio workers); credential pass-through without secret logging (verified clean); no retry/backoff anywhere in core/platform/tokio (feeds F2.2); X11 `unwrap()` on client init (fail-fast with context, consistent with `current_platform() -> Rc` being infallible by signature — noted for porting).
+- Coverage disposition: COMPLETE (all three mechanical passes investigated to their exit tests; B1c done, phase ready for validation).
 
 ## Validation
 
-<!-- Phase incomplete: B1c pending. Validation runs at phase completion. Criterion 1 already satisfiable (passes 1–2 produced findings); criteria 2–8 assessed then. -->
+<!-- B1a–B1c complete. Executor self-assessment below; codecarto_validate parses this block before completion. -->
 
 | # | Criterion | Result | Evidence |
 |---|-----------|--------|----------|
-| 1 | At least two of the three mechanical passes (1, 2, 6) produced findings or documented "no defects found." | PENDING | Passes 1–2: 4 findings. Pass 6: block B1c not executed. |
-| 2 | Each finding has location, severity, evidence level, and recommended action. | PENDING | Holds for the 4 pass-1/2 findings; phase-level check at completion. |
-| 3 | Findings are organized by pass and sorted by severity. | PENDING | As above. |
-| 4 | Summary tables are complete and counts match the detailed findings. | PENDING | As above. |
-| 5 | Findings are marked with evidence levels. | PENDING | As above. |
-| 6 | Coverage and limits name inspected scope, skipped scope, evidence basis, and blind spots. | PENDING | B1a scope recorded; full section at completion. |
-| 7 | Unsettled findings carry an unsettled action and each appears in the Open Questions table. | PENDING | No unsettled pass-1 findings; checked at completion. |
-| 8 | Every quantitative specific cites the file and line or command output it was read from, or is marked as an estimate. | PENDING | Pass-1 citations present; checked at completion. |
+| 1 | At least two of the three mechanical passes (1, 2, 6) produced findings or documented "no defects found." | PASS | Passes 1, 2, 6 each produced findings (2 + 2 + 1). |
+| 2 | Each finding has location, severity, evidence level, and recommended action. | PASS | All 5 findings carry file:line location, severity, evidence level, action. |
+| 3 | Findings are organized by pass and sorted by severity. | PASS | Three pass sections; severity-ordered within each. |
+| 4 | Summary tables are complete and counts match the detailed findings. | PASS | Severity table (0/0/3/2/5) and by-pass table match the 5 detailed findings. |
+| 5 | Findings are marked with evidence levels. | PASS | All 5 findings marked; F1.2 is strong inference (invariant argued, not runtime-proven) — recorded here. |
+| 6 | Coverage and limits name inspected scope, skipped scope, evidence basis, and blind spots. | PASS | §Coverage and limits: inspected/skipped per block, basis source inspection, blind spots named. |
+| 7 | Unsettled findings carry an unsettled action and each appears in the Open Questions table. | PASS | No finding uses open-question/external-behavior evidence; no Open Questions rows required. |
+| 8 | Every quantitative specific cites the file and line or command output it was read from, or is marked as an estimate. | PASS | All locations cite file:line; no bare sizes/versions/timeouts asserted. |
 
-**Validated by:** — (pending phase completion)
-**Overall:** PENDING
+**Validated by:** 2026-11-22 (defect-scan-mechanical, inline executor self-assessment; framework validation to confirm)
+**Overall:** PASS

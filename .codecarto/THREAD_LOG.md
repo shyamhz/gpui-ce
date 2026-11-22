@@ -35,3 +35,4 @@ grep -E '^- [0-9]{4}-[0-9]{2}-[0-9]{2}' .codecarto/THREAD_LOG.md | sort | uniq -
   - 2026-03-14 — architecture — mapped 14 packages across 3 layers; wire formats deferred to protocols — [closeout](closeouts/2026-03-14-architecture.md)
 -->
 - 2026-11-21 — architecture — Mapped GPUI-CE architecture across 24 crates with evidence tags and three runtime open questions. — [closeout](closeouts/2026-11-21-architecture.md)
+- 2026-11-22 — defect-scan-mechanical — Mechanical defect scan complete with 5 findings; frame-reuse invariant routed to protocols. — [closeout](closeouts/2026-11-22-defect-scan-mechanical.md)
