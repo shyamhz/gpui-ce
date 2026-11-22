@@ -23,8 +23,10 @@ gates, handoffs); this folder is the record a person reviews and git tracks.
 
 - Findings originate in `.codecarto/findings/` (phase outputs the framework
   validates and later phases consume as required reading). At each block exit,
-  new findings are mirrored here, so this folder always reflects completed,
-  validated work — never drafts.
+  new findings are mirrored here, so this folder tracks the latest block
+  output. Mirrors of incomplete phases carry explicit PENDING markers — they
+  are work-in-progress snapshots, not validated results; only a phase with a
+  PASS validation block counts as complete.
 
 - Framework state (`status.yaml`, closeouts, `THREAD_LOG.md`, `CONVENTIONS.md`,
   `DECISIONS.md`) stays in `.codecarto/` and is committed alongside this
