@@ -1,0 +1,79 @@
+project_name: gpui-ce
+pipeline: workflow/pipeline-full-with-deep-audit.yaml
+current_phase: defect-scan-mechanical
+last_updated: "2026-11-21T16:12:25.413Z"
+schema_version: 1
+phases:
+  architecture:
+    status: complete
+    owner_notes:
+      - "Completed via codecarto_complete."
+      - "Primary output: .codecarto/findings/architecture/architecture-map.md"
+      - "Validation: PASS"
+      - "Mapped 24 crates plus tooling across 3 layers with dependency direction proven from manifests"
+      - "Ran inline after subagent delegation failed on usage limits so every load-bearing claim cites directly read evidence"
+      - "Seeded CONVENTIONS.md and DECISIONS.md from templates as first-time setup and recorded pipeline choice"
+    outputs_present:
+      - findings/architecture/architecture-map.md
+    open_questions:
+      -
+        id: q-headless-parity
+        kind: needs-runtime-test
+        description: "Do headless and test renderers produce pixel-identical scenes to on-screen presentation so a port can use headless output as an oracle?"
+        deferred_reason: "Requires running GPU and headless paths side by side, not answerable by reading."
+      -
+        id: q-gpu-fallback
+        kind: needs-runtime-test
+        description: "What happens on each platform when no GPU device or surface is available, and which errors reach the app?"
+        deferred_reason: "Failure paths live in backend init code not fully read, needs execution in GPU-less environments."
+      -
+        id: q-frame-scheduling
+        kind: needs-runtime-test
+        description: "What paces frames on Linux, Windows, and web? macOS display_link.rs was read, others were not verified."
+        deferred_reason: "Requires platform event-loop observation, affects animation-timing port fidelity."
+    carry_forward: []
+  defect-scan-mechanical:
+    status: pending
+    owner_notes: []
+    outputs_present: []
+    open_questions: []
+    carry_forward: []
+  contracts:
+    status: pending
+    owner_notes: []
+    outputs_present: []
+    open_questions: []
+    carry_forward: []
+  protocols:
+    status: pending
+    owner_notes: []
+    outputs_present: []
+    open_questions: []
+    carry_forward: []
+  defect-scan-semantic:
+    status: pending
+    owner_notes: []
+    outputs_present: []
+    open_questions: []
+    carry_forward: []
+  porting:
+    status: pending
+    owner_notes: []
+    outputs_present: []
+    open_questions: []
+    carry_forward: []
+  reimplementation-spec:
+    status: pending
+    owner_notes: []
+    outputs_present: []
+    open_questions: []
+    carry_forward: []
+next_actions:
+  - "Begin defect-scan-mechanical phase by producing findings/defect-scan-mechanical/mechanical-defects.md"
+post_pipeline:
+  -
+    id: post-frame-capture
+    kind: spike
+    description: "Capture headless versus on-screen frame output for a sample app to settle q-headless-parity before any reimplementation work treats headless scenes as ground truth."
+    source_phase: architecture
+    status: pending

@@ -1,0 +1,152 @@
+# Mechanical Defects Report — [project_name]
+
+<!--
+  Output template for the `defect-scan-mechanical` phase.
+  Covers passes 1, 2, and 6 from the defect-scan methodology — the bugs visible
+  from local code reading without contracts or protocols context.
+  See findings/defect-scan-mechanical/SKILL.md for instructions.
+-->
+
+## Scan Context
+
+- **Source:** `../` (repository root)
+- **Architecture reference:** `findings/architecture/architecture-map.md`
+- **Pipeline:** [pipeline variant name]
+- **Date:** [date]
+- **Scope:** Mechanical passes only (1 logic, 2 error handling, 6 configuration). Semantic passes (3 concurrency, 4 security, 5 contract violations) deferred to `defect-scan-semantic` after protocols.
+
+---
+
+## Pass 1: Logic and Correctness
+
+<!-- For each finding: location, defect, evidence, severity, evidence level, action. -->
+<!-- Sort by severity: critical → high → medium → low. -->
+<!-- If no findings, write "No defects found in this category." -->
+<!-- Evidence Level: observed fact / strong inference / external-behavior claim / open question.
+     Action: fix before porting / port differently / leave behind / verify at runtime.
+     Pairing rule (validated mechanically): open question or external-behavior claim ⇒
+     verify at runtime or port differently, never fix before porting; and list the finding
+     in ## Open Questions below. -->
+
+| # | Location | Defect | Severity | Evidence Level | Action |
+|---|----------|--------|----------|----------------|--------|
+| 1 | | | | | |
+
+---
+
+## Pass 2: Error Handling and Resilience
+
+| # | Location | Defect | Severity | Evidence Level | Action |
+|---|----------|--------|----------|----------------|--------|
+| 1 | | | | | |
+
+---
+
+## Pass 6: Configuration and Environment Hazards
+
+| # | Location | Defect | Severity | Evidence Level | Action |
+|---|----------|--------|----------|----------------|--------|
+| 1 | | | | | |
+
+---
+
+## Summary
+
+### Findings by Severity
+
+| Severity | Count |
+|----------|-------|
+| Critical | |
+| High | |
+| Medium | |
+| Low | |
+| **Total** | |
+
+### Findings by Pass
+
+| Pass | Critical | High | Medium | Low | Total |
+|------|----------|------|--------|-----|-------|
+| 1. Logic and correctness | | | | | |
+| 2. Error handling | | | | | |
+| 6. Config and environment | | | | | |
+
+### Top Findings
+
+<!-- List the most impactful findings across the mechanical passes, ranked by severity and confidence.
+     Include: pass number, location, one-line defect description, severity, recommended action. -->
+
+1.
+2.
+3.
+4.
+5.
+
+### Routed To Semantic Phase
+
+<!-- Items spotted during this phase that are actually semantic in nature
+     (concurrency, security, contract drift). Mirror these into your phase handoff at
+     scratch/handoffs/defect-scan-mechanical.yaml as carry_forward entries with
+     target_phase: defect-scan-semantic; completion applies them to workflow/status.yaml.
+     The table below documents the routing — it does not perform it. -->
+
+| ID | Description | Why Routed |
+|----|-------------|-----------|
+| | | |
+
+---
+
+## Runtime probes
+
+<!-- Optional, but the strongest evidence this report can carry. One row per probe you ran to
+     confirm or refute a finding before assigning its severity: a short script that drives the
+     code path and shows the wrong result, the lost write, the escaped path. Keep the scripts
+     under scratch/probes/ so the porting phase can rerun them, and put the finding's row number
+     in the Finding column so the two can be read together. A probe that did NOT reproduce the
+     read prediction is worth a row too — it is what lowers a severity honestly. -->
+
+| Probe | Finding | What it did | What it showed | Script |
+|---|---|---|---|---|
+| | | | | |
+
+---
+
+## Open Questions
+
+<!-- Every finding whose Evidence Level is open question or external-behavior claim gets a row
+     here, so the hedge travels with the finding into this document — not only into the handoff.
+     Mirror each row into your phase handoff's open_questions (kind: needs-runtime-test unless a
+     maintainer decision or spec ruling is what is missing). Derived findings lists the finding
+     numbers (e.g. "1.3, 6.1") that depend on this question; none of them may carry a settled
+     action while the question stands. -->
+
+| ID | Kind | Question | Why source cannot settle it | Derived findings |
+|----|------|----------|-----------------------------|------------------|
+| | | | | |
+
+---
+
+## Coverage and limits
+
+- Inspected scope:
+- Skipped scope:
+- Evidence basis: source inspection | tests | runtime verification | upstream findings
+- Known blind spots:
+- Coverage disposition: COMPLETE | PARTIAL
+
+## Validation
+
+<!-- Fill in this table per workflow/VALIDATE.md. The rows below match the mechanical-pass scope. -->
+
+| # | Criterion | Result | Evidence |
+|---|-----------|--------|----------|
+| 1 | At least two of the three mechanical passes (1, 2, 6) produced findings or documented "no defects found." | PASS / PARTIAL / FAIL | |
+| 2 | Each finding has location, severity, evidence level, and recommended action. | PASS / PARTIAL / FAIL | |
+| 3 | Findings are organized by pass and sorted by severity. | PASS / PARTIAL / FAIL | |
+| 4 | Summary tables are complete and counts match the detailed findings. | PASS / PARTIAL / FAIL | |
+| 5 | Findings are marked with evidence levels. | PASS / PARTIAL / FAIL | |
+| 6 | Coverage and limits name inspected scope, skipped scope, evidence basis, and blind spots. | PASS / PARTIAL / FAIL | |
+| 7 | Unsettled findings (evidence level open question or external-behavior claim) carry an unsettled action (verify at runtime or port differently on pre-porting pipelines; investigate on maintenance pipelines), never a settled one, and each appears in the Open Questions table. | PASS / PARTIAL / FAIL | |
+| 8 | Every quantitative specific in a finding (size, count, default, version, timeout) cites the file and line or command output it was read from, or is marked as an estimate. | PASS / PARTIAL / FAIL | |
+
+**Validated by:** [session identifier or date]
+**Overall:** PASS / PASS WITH GAPS / FAIL
