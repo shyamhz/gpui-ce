@@ -6,8 +6,8 @@ GPUI-CE is a Rust library (API/SDK surface). No CLI, TUI, or bot surfaces exist.
 Contracts below are written against the public Rust API so a reimplementation
 in another language can honor the observable behavior without reading Rust.
 
-B2d scope (this revision): animation and timing contracts only. Contracts for
-elements/composition (B2a), input/focus/keys (B2b), layout/measurement (B2c),
+B2d + B2c scope (this revision): animation/timing and layout/measurement
+contracts. Contracts for elements/composition (B2a), input/focus/keys (B2b),
 text (B2e), and supporting systems (B2f) follow in later blocks; their
 sections are marked PENDING, not absent.
 
@@ -105,6 +105,98 @@ sections are marked PENDING, not absent.
 | **Owner (layer/package)** | `gpui` core (`app.rs:1240-1257`; honored in `style_transitions.rs`, `elements/animation.rs`) |
 | **Evidence** | Observed fact: flag, setter with refresh (`app.rs:1240-1257`); `jump_to` on reduce (`style_transitions.rs:269`; `animation.rs` reduce branch) |
 
+### API/SDK — layout and measurement (B2c)
+
+#### C7 Flex/grid layout via version-pinned taffy
+
+| Field | Value |
+|---|---|
+| **Feature** | Element tree layout through taffy 0.13.0 (=0.13.0 pin) |
+| **Trigger or input** | `Window::request_layout(style, children)` / `TaffyLayoutEngine::request_layout` (container) or `request_measured_layout` (measured leaf); then `compute_layout(id, available_space, direction, …)` per frame |
+| **Defaults** | `Position::Relative` (unlike CSS); `AvailableSpace::MinContent` is the enum default; engine rebuilt every frame (`layout_engine.clear()` in `draw()`) |
+| **Observable output** | `LayoutId` → `layout_bounds(id, scale_factor)` in `Pixels`; per-node cached available spaces drive targeted recompute on direction change |
+| **Side effects** | Taffy node allocation per frame; direction resolution pass precedes layout |
+| **Persisted state** | None across frames (nodes re-requested every frame); within a frame: node metadata (display/position, direction, vertical-align) |
+| **Error behavior** | Taffy construction errors panic via `expect(EXPECT_MESSAGE)` ("avoid by construction") — internal invariant, not a user path |
+| **Retry or recovery behavior** | N/A (deterministic recompute) |
+| **Owner (layer/package)** | `gpui` core (`taffy.rs`); exact flex/grid semantics delegated to taffy 0.13.0 — a port must match that version's behavior, not just any flexbox |
+| **Evidence** | Observed fact: `request_layout`/`request_measured_layout`/`compute_layout`/`record_style` (`taffy.rs:106-200, 426-470`); full flex+grid mapping (`taffy.rs:837-935`); pin (`Cargo.toml`) |
+
+#### C8 Length resolution (absolute, relative, auto)
+
+| Field | Value |
+|---|---|
+| **Feature** | `Length`/`DefiniteLength` → device pixels |
+| **Trigger or input** | Style construction with `Absolute` / `Relative(f32)` / `Auto` lengths |
+| **Defaults** | `Absolute` resolves through `rem_size` (override stack, else window root) and is pre-snapped via `round_to_device_pixel` before reaching taffy |
+| **Observable output** | `Relative(x)` becomes exactly `x` fraction of the parent (`Dimension::percent`); `Auto` is content-driven (measured leaves) or absorbs free space |
+| **Side effects** | None |
+| **Persisted state** | None |
+| **Error behavior** | None (total mapping; `..Default::default()` for unmapped taffy fields) |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`taffy.rs:955-1010`) |
+| **Evidence** | Observed fact: `ToTaffy` impls for `DefiniteLength`/`AbsoluteLength`/`Length` |
+
+#### C9 Available space and measured leaves
+
+| Field | Value |
+|---|---|
+| **Feature** | Measure protocol for text/content leaves |
+| **Trigger or input** | Taffy invokes the `measure(known_dimensions, available_space, window, cx) -> Size<Pixels>` closure supplied at `request_measured_layout` time |
+| **Defaults** | Unconstrained axes arrive as `MinContent`/`MaxContent`, never as silently-zero definite space |
+| **Observable output** | Returned `Size<Pixels>` becomes the leaf's size for that layout pass |
+| **Side effects** | Bidi metadata (`effective_unicode_bidi`) recorded per node at request time |
+| **Persisted state** | Per-node direction metadata (`authored`, `resolved`, logical children) |
+| **Error behavior** | None at this layer (measure runs user/text code; its errors are the caller's) |
+| **Retry or recovery behavior** | Taffy may invoke measure repeatedly during one layout (constraint refinement) — closures must be idempotent and side-effect free |
+| **Owner (layer/package)** | `gpui` core (`taffy.rs:133-200`); text implementation in `text_system` (B2e owns shaping specifics) |
+| **Evidence** | Observed fact: `request_measured_layout` signature + `NodeContext`; strong inference on repeat invocation (taffy measure protocol, version-pinned) |
+
+#### C10 Bounds snapping and caching
+
+| Field | Value |
+|---|---|
+| **Feature** | Layout → pixel bounds with device-grid snapping |
+| **Trigger or input** | `layout_bounds(id, scale_factor)` after `compute_layout` |
+| **Defaults** | Absolute edge snapping (`round_half_toward_zero` on both corners) so coincident edges close; text uses parent-relative placement so intra-element offsets stay stable across the pixel grid |
+| **Observable output** | `Bounds<Pixels>` = snapped device bounds ÷ scale factor; results cached per node (`absolute_layout_bounds`) |
+| **Side effects** | Recursive parent-origin accumulation on first query per frame |
+| **Persisted state** | Per-frame caches, cleared with the layout engine |
+| **Error behavior** | Missing parent origin panics (`expect`, internal invariant) |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`taffy.rs:630-696`) |
+| **Evidence** | Observed fact: `layout_bounds` + `parent_relative_layout_bounds` with stability comment |
+
+#### C11 Direction resolution precedes layout
+
+| Field | Value |
+|---|---|
+| **Feature** | Bidi/direction handling outside taffy |
+| **Trigger or input** | `compute_layout` resolves directions for the subtree first (`resolve_directions`), then lays out; changed subtrees are recomputed with cached bounds cleared |
+| **Defaults** | Taffy itself is always fed `Direction::Ltr`; GPUI's own layer owns `LayoutDirection`/`UnicodeBidi` semantics |
+| **Observable output** | Resolved direction per node; direction-only changes recompute just the affected subtree |
+| **Side effects** | Targeted cache invalidation (`clear_cached_bounds`) |
+| **Persisted state** | Per-node direction metadata |
+| **Error behavior** | None |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`taffy.rs` direction metadata + `compute_layout`) |
+| **Evidence** | Observed fact: hardcoded `Direction::Ltr` in mapping (`taffy.rs:837-935`); `resolve_directions` + `clear_cached_bounds` in `compute_layout` |
+
+#### C12 Inline layout and vertical alignment
+
+| Field | Value |
+|---|---|
+| **Feature** | `Display::Inline`/`InlineFlex` with `VerticalAlign` |
+| **Trigger or input** | `Styled::inline()` / `inline_flex()` + `vertical_align(...)` / `align_baseline|top|middle|bottom()` |
+| **Defaults** | `VerticalAlign::Baseline` (only non-default values are recorded per node) |
+| **Observable output** | Inline fragments laid out in text order with the requested alignment |
+| **Side effects** | Per-node vertical-alignment + display/position metadata |
+| **Persisted state** | `vertical_alignments` / `display_and_position` maps, per frame |
+| **Error behavior** | None |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`taffy.rs` metadata, `vertical_align()` accessor) |
+| **Evidence** | Observed fact: `record_style` non-default recording; `vertical_align()` default (`taffy.rs:169-177, 327-331`) |
+
 ## High-Value Behaviors
 
 B2d-relevant notes only; other blocks pending.
@@ -141,10 +233,20 @@ B2d scenarios only; other blocks append theirs at phase completion.
 | B2d-8 | Infinite iterations never complete | Motion with `Iterations::Forever` | Sample at any time | Phase never `Completed` |
 | B2d-9 | Completed run reports final iteration | Finite motion, elapsed past total duration | Sample | Phase `Completed`, iteration equals final index |
 | B2d-10 | max_fps throttle | Animation with `max_fps = N` | Observe frame callbacks | At most N evaluations per second |
+| B2c-1 | Relative sizing | Child with `Relative(0.5)` width in a fixed-width parent | Lay out and read bounds | Child width equals half the parent width |
+| B2c-2 | Rem scaling | Same tree rendered under two `rem_size` roots | Compare absolute-positioned bounds | Bounds scale with the root rem size |
+| B2c-3 | Min-content default | Unconstrained leaf (e.g. text) with no definite size | Lay out with indefinite space | Leaf sizes to its min content, never to zero-or-unbounded |
+| B2c-4 | Measured leaf stability | Text leaf under identical constraints, two frames | Compare returned sizes | Identical `Size<Pixels>` (measure is pure for identical inputs) |
+| B2c-5 | Edge closing | Two adjacent boxes sharing an edge coordinate | Read both bounds | No gap and no overlap between the coincident edges |
+| B2c-6 | Direction change isolation | Subtree direction flipped, rest of tree untouched | Recompute and read bounds | Only the affected subtree's bounds change |
+| B2c-7 | Inline baseline default | Inline children with no explicit alignment | Lay out | Children align on the text baseline |
+| B2c-8 | Engine freshness | Layout queried, then a new frame draws with changed styles | Read bounds after the new frame | Bounds reflect the new styles (no stale per-frame state) |
 
 ## Coverage and limits
 
 - Inspected scope (B2d): `motion.rs` (Motion/MotionSample/phase/dir/iteration, `sample`/`sample_at`, `checked_extent`, `resting_progress`); `spring.rs` (`step`/`step_ramp`/`propagator`/`is_settled`/`settle_time`); `animated.rs` (`set`/`restart`/`jump_to`/`adopt_completed_target`/`reset`/`sample`); `transition.rs` (`evaluate` frame pumping, `continuous`); `window.rs` `use_transition`/`use_keyed_transition`; `elements/animation.rs` (playlist, synced/unsynced elapsed, max_fps, reduce_motion); `app.rs` reduce-motion flag + epoch init; `style_transitions.rs` evaluate path + reduce branch.
+- Inspected scope (B2c): `TaffyLayoutEngine` (`request_layout`, `request_measured_layout`, `compute_layout`, `layout_bounds`, `parent_relative_layout_bounds`); `ToTaffy` style mapping incl. hardcoded taffy-`Ltr` + grid templates; length resolution (`DefiniteLength`/`AbsoluteLength` impls) + `rem_size` override stack; `AvailableSpace` semantics; direction metadata + `resolve_directions`/targeted recompute; `VerticalAlign` default + accessor; `EXPECT_MESSAGE` panic sites (internal invariant, not filed).
+- Skipped scope (later B2 blocks): elements/composition (B2a), input/focus/keys (B2b), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f); full `Styled` method catalog and grid edge cases (behavioral spot-checks only).
 - Skipped scope (later B2 blocks): elements/composition (B2a), input/focus/keys (B2b), full style/taffy mapping (B2c), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f).
 - Evidence basis: source inspection (code + doc comments as specified behavior).
 - Known blind spots: wall-clock pacing of frame timestamps (stays with `q-frame-scheduling`, needs runtime); exact `now` source in style-transition path (frame time vs read time — read as evaluate-time `now`, confirm in B2c/protocols if it matters); gesture/keyboard timing (B2b/B2e).
