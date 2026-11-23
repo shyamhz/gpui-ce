@@ -6,8 +6,8 @@ GPUI-CE is a Rust library (API/SDK surface). No CLI, TUI, or bot surfaces exist.
 Contracts below are written against the public Rust API so a reimplementation
 in another language can honor the observable behavior without reading Rust.
 
-B2d + B2c scope (this revision): animation/timing and layout/measurement
-contracts. Contracts for elements/composition (B2a), input/focus/keys (B2b),
+B2d + B2c + B2a scope (this revision): animation/timing, layout/measurement,
+and elements/composition contracts. Contracts for input/focus/keys (B2b),
 text (B2e), and supporting systems (B2f) follow in later blocks; their
 sections are marked PENDING, not absent.
 
@@ -197,6 +197,128 @@ sections are marked PENDING, not absent.
 | **Owner (layer/package)** | `gpui` core (`taffy.rs` metadata, `vertical_align()` accessor) |
 | **Evidence** | Observed fact: `record_style` non-default recording; `vertical_align()` default (`taffy.rs:169-177, 327-331`) |
 
+### API/SDK — elements and composition (B2a)
+
+#### C13 Element three-phase protocol
+
+| Field | Value |
+|---|---|
+| **Feature** | `Element::request_layout` → `prepaint` → `paint` state machine |
+| **Trigger or input** | Framework drives phases per frame; custom elements implement the three methods |
+| **Defaults** | Phase order enforced by panic (`must call request_layout only once`, `…before prepaint`, `prepaint before paint`, `cannot measure after painting`); re-measure with unchanged available space reuses cached layout |
+| **Observable output** | LayoutId → bounds → paint primitives; violations abort with the documented message |
+| **Side effects** | Taffy node allocation; element-id stack push/pop for state scoping |
+| **Persisted state** | Per-frame `ElementDrawPhase`; nothing persists across frames except via ids |
+| **Error behavior** | Out-of-order or duplicate phase calls panic (fail-fast contract enforcement, same policy as 1.1-style id panics) |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`element.rs:670-955`) |
+| **Evidence** | Observed fact: phase enum + guard panics; `compute_layout_as_root` space caching |
+
+#### C14 Composition and identity
+
+| Field | Value |
+|---|---|
+| **Feature** | `ParentElement::child/children` builders; `IntoElement` conversion; id paths |
+| **Trigger or input** | Builder chains (`div().child(…)`); `id()` on stateful elements |
+| **Defaults** | Typeless `ParentElement` accepts any `IntoElement`; `ParentElementTyped` constrains row types |
+| **Observable output** | Element tree rebuilt every frame; an element's state is found again by its id path from the window root — the path includes every ancestor that has an id, so two same-id elements under different id-less parents collide |
+| **Side effects** | None beyond tree construction |
+| **Persisted state** | State keyed by `(GlobalElementId, TypeId)` across frames |
+| **Error behavior** | Type mismatch on state reuse panics in debug with requested-vs-actual types |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`element.rs:179-520`) |
+| **Evidence** | Observed fact: trait docs on id paths; `with_element_state` keying + debug type check (`window.rs`); call-site collision documented for `use_state` |
+
+#### C15 Element-scoped state
+
+| Field | Value |
+|---|---|
+| **Feature** | `use_state` / `use_keyed_state` / `with_element_state` |
+| **Trigger or input** | Called during render/draw with an init closure; `use_state` keys by caller source location (`#[track_caller]`), `use_keyed_state` by explicit key |
+| **Defaults** | Reused if the same id existed in the rendered frame; a change observer is auto-attached that notifies the current view |
+| **Observable output** | `Entity<S>` handle; state lives while the element renders in consecutive frames |
+| **Side effects** | Observer registration (auto-notify on change) |
+| **Persisted state** | Element states map keyed `(GlobalElementId, TypeId)`, transferred rendered→next frame |
+| **Error behavior** | Called outside render/draw fails debug assertions; list items sharing a call site share state (documented: use keyed state there) |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`window.rs:4222-4300+`) |
+| **Evidence** | Observed fact: `use_state`/`use_keyed_state`/`with_element_state` docs + bodies |
+
+#### C16 Hit-testing
+
+| Field | Value |
+|---|---|
+| **Feature** | `Hitbox` registration + `mouse_hit_test` |
+| **Trigger or input** | Elements insert hitboxes during paint with bounds + `HitboxBehavior` |
+| **Defaults** | `Normal` (no effect on others); occluding behavior blocks mouse events, hover styles, and tooltips for hitboxes behind |
+| **Observable output** | `HitTest` inspectable via `mouse_hit_test()`; `hitbox.is_hovered()` reflects occlusion |
+| **Side effects** | None beyond registration |
+| **Persisted state** | Per-frame hitbox lists |
+| **Error behavior** | None |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`window.rs:962-1040`, hit-test query) |
+| **Evidence** | Observed fact: `Hitbox` struct + `HitboxBehavior` docs |
+
+#### C17 Virtualized uniform list
+
+| Field | Value |
+|---|---|
+| **Feature** | `uniform_list(id, item_count, render_range)` |
+| **Trigger or input** | Item count + `Fn(Range<usize>, …) -> Vec<R>` invoked with the visible range |
+| **Defaults** | Vertical scroll overflow; only the visible subset renders per frame |
+| **Observable output** | Rows for `visible_range`; `ListScrollEvent { visible_range, count, … }` on scroll |
+| **Side effects** | Scroll handling; pending-scroll anchoring across remeasure |
+| **Persisted state** | `ListState` (scroll offset, pending scroll, follow state) |
+| **Error behavior** | None at this layer (range arithmetic reviewed in B1a, benign) |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`elements/list.rs`, `uniform_list.rs`) |
+| **Evidence** | Observed fact: constructor signature + overflow default (`uniform_list.rs:22-35`); event emission (`list.rs:943-957`) |
+
+#### C18 Canvas custom drawing
+
+| Field | Value |
+|---|---|
+| **Feature** | `canvas(prepaint, paint)` escape hatch |
+| **Trigger or input** | Two `FnOnce` callbacks: prepaint receives bounds, returns state; paint receives bounds + state |
+| **Defaults** | No retained state between frames beyond what the callbacks close over |
+| **Observable output** | Direct `Window` paint calls (quads, paths, text) inside paint |
+| **Side effects** | Caller-defined |
+| **Persisted state** | None (framework holds no canvas state) |
+| **Error behavior** | None |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`elements/canvas.rs:8-22`) |
+| **Evidence** | Observed fact: constructor docs + signature |
+
+#### C19 Deferred paint layers
+
+| Field | Value |
+|---|---|
+| **Feature** | `deferred(child)` out-of-order painting |
+| **Trigger or input** | Wrapped child + priority (`priority_auto` = 1 + previous deferred priority) + optional content mask |
+| **Defaults** | Painted after all non-deferred content in priority order |
+| **Observable output** | Deferred draws composited per `paint_range` bookkeeping |
+| **Side effects** | Deferred-draw queue per frame |
+| **Persisted state** | Per-frame queue only |
+| **Error behavior** | None |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`elements/deferred.rs:95-106`) |
+| **Evidence** | Observed fact: `priority_auto` docs + `DeferredPriority` |
+
+#### C20 Images, SVG, surfaces, overlays
+
+| Field | Value |
+|---|---|
+| **Feature** | `img`, `svg`, `surface`, `anchored`, `container_query` elements |
+| **Trigger or input** | `img(ImageSource::{Resource, Render, Image, Custom(loader fn)})`; `svg()` builder; `surface(SurfaceSource)` custom-shader content; `anchored()` overflow-avoiding overlay at an anchor corner; `container_query(render_fn)` receiving container `Size` |
+| **Defaults** | Custom image loader returns `Option<Result<…>>` (absence tolerated); anchored avoids window overflow by default |
+| **Observable output** | Rasterized images / SVG scenes / GPU surfaces / positioned overlays / size-dependent content |
+| **Side effects** | Image-cache loading; surface registration |
+| **Persisted state** | Image cache; surface handles |
+| **Error behavior** | SVG parse/render errors propagate as `Result` (B1b-verified); custom loader `None` = no image |
+| **Retry or recovery behavior** | None specified at this layer |
+| **Owner (layer/package)** | `gpui` core (`elements/img.rs:42-51`, `svg.rs`, `surface.rs:13-109`, `anchored.rs`, `container_query.rs:33-39`) |
+| **Evidence** | Observed fact: source-variant enums + builder signatures |
+
 ## High-Value Behaviors
 
 B2d-relevant notes only; other blocks pending.
@@ -241,11 +363,21 @@ B2d scenarios only; other blocks append theirs at phase completion.
 | B2c-6 | Direction change isolation | Subtree direction flipped, rest of tree untouched | Recompute and read bounds | Only the affected subtree's bounds change |
 | B2c-7 | Inline baseline default | Inline children with no explicit alignment | Lay out | Children align on the text baseline |
 | B2c-8 | Engine freshness | Layout queried, then a new frame draws with changed styles | Read bounds after the new frame | Bounds reflect the new styles (no stale per-frame state) |
+| B2a-1 | Phase-order enforcement | Custom element calling paint before prepaint | Draw the frame | Panic with the documented phase message |
+| B2a-2 | State persistence by id | Stateful element with stable id, state mutated | Draw next frame unchanged | State value retained |
+| B2a-3 | Call-site collision | Two `use_state` calls at the same call site in a loop | Draw | Both share one state (documented: use keyed state) |
+| B2a-4 | Occlusion | Occluding hitbox in front of a hoverable element | Move mouse over the overlap | Behind element reports not-hovered; no hover style |
+| B2a-5 | Virtualization window | 10k-row uniform_list scrolled to the middle | Count rendered rows | Only the visible subset renders; scroll event reports the matching range |
+| B2a-6 | Canvas order | Canvas with recording prepaint + paint | Draw one frame | Prepaint runs before paint with the same bounds |
+| B2a-7 | Deferred ordering | Deferred child with higher priority inside normal content | Draw | Deferred content paints after non-deferred, higher priority on top |
+| B2a-8 | Container query resize | `container_query` element under a resized parent | Draw after resize | Render fn receives the updated container size |
 
 ## Coverage and limits
 
 - Inspected scope (B2d): `motion.rs` (Motion/MotionSample/phase/dir/iteration, `sample`/`sample_at`, `checked_extent`, `resting_progress`); `spring.rs` (`step`/`step_ramp`/`propagator`/`is_settled`/`settle_time`); `animated.rs` (`set`/`restart`/`jump_to`/`adopt_completed_target`/`reset`/`sample`); `transition.rs` (`evaluate` frame pumping, `continuous`); `window.rs` `use_transition`/`use_keyed_transition`; `elements/animation.rs` (playlist, synced/unsynced elapsed, max_fps, reduce_motion); `app.rs` reduce-motion flag + epoch init; `style_transitions.rs` evaluate path + reduce branch.
 - Inspected scope (B2c): `TaffyLayoutEngine` (`request_layout`, `request_measured_layout`, `compute_layout`, `layout_bounds`, `parent_relative_layout_bounds`); `ToTaffy` style mapping incl. hardcoded taffy-`Ltr` + grid templates; length resolution (`DefiniteLength`/`AbsoluteLength` impls) + `rem_size` override stack; `AvailableSpace` semantics; direction metadata + `resolve_directions`/targeted recompute; `VerticalAlign` default + accessor; `EXPECT_MESSAGE` panic sites (internal invariant, not filed).
+- Inspected scope (B2a): element phase machine (`element.rs:670-955` guards + `compute_layout_as_root`); `ParentElement`/`IntoElement` composition + id-path scoping docs; `use_state`/`use_keyed_state`/`with_element_state` (`window.rs:4222-4300+`); `Hitbox`/`HitboxBehavior` (`window.rs:962-1041`); `uniform_list` ctor + `ListScrollEvent`; `canvas` callbacks; `deferred` priority; `Surface`/`ImageSource`/anchored/container-query builders.
+- Skipped scope (later B2 blocks): input/focus/keys (B2b), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f); per-`Styled`-method styling catalog (presentation details, not composition).
 - Skipped scope (later B2 blocks): elements/composition (B2a), input/focus/keys (B2b), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f); full `Styled` method catalog and grid edge cases (behavioral spot-checks only).
 - Skipped scope (later B2 blocks): elements/composition (B2a), input/focus/keys (B2b), full style/taffy mapping (B2c), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f).
 - Evidence basis: source inspection (code + doc comments as specified behavior).
