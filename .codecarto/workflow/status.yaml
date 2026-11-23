@@ -1,7 +1,7 @@
 project_name: gpui-ce
 pipeline: workflow/pipeline-full-with-deep-audit.yaml
-current_phase: reimplementation-spec
-last_updated: "2026-11-23T14:23:38.383Z"
+current_phase: complete
+last_updated: "2026-11-23T14:30:11.212Z"
 schema_version: 1
 phases:
   architecture:
@@ -99,17 +99,39 @@ phases:
     open_questions: []
     carry_forward: []
   reimplementation-spec:
-    status: pending
-    owner_notes: []
-    outputs_present: []
+    status: complete
+    owner_notes:
+      - "Completed via codecarto_complete."
+      - "Primary output: .codecarto/findings/reimplementation-spec/reimplementation-spec.md"
+      - "Validation: PASS"
+      - "B6 uses the language-agnostic variant selected by the approved reconstruction roadmap."
+      - "The spec separates requirements from port choices, preserves all eleven defect dispositions, and maps thirty-six scenarios to ten implementation slices."
+      - "No runtime tests were run. The three existing runtime questions remain open and are covered by the B7a plans."
+    outputs_present:
+      - findings/reimplementation-spec/reimplementation-spec.md
     open_questions: []
     carry_forward: []
 next_actions:
-  - "Begin reimplementation-spec phase by producing findings/reimplementation-spec/reimplementation-spec.md"
+  - "All phases complete. Review findings; post-pipeline skills: codecarto_list_skills then codecarto_skill on MCP, /codecarto-list-skills then /codecarto-skill on Pi."
+  - "3 open question(s) and 3 post-pipeline item(s) remain — apply resolutions with codecarto_amend on MCP, /codecarto-amend on Pi (write scratch/amendments/<slug>.yaml from templates/amendment.yaml)."
+  - "Publish the finished spec to a library: codecarto_publish on MCP, /codecarto-publish on Pi (create one with codecarto_library_init on MCP, /codecarto-library-init on Pi; see the library guide topic)."
+  - "Dashboard: .codecarto/dashboard.html (refreshed on completion and amendment; re-render on demand with codecarto_dashboard on MCP, /codecarto-dashboard on Pi). Usage totals: codecarto_usage on MCP, /codecarto-usage on Pi."
 post_pipeline:
   -
     id: post-frame-capture
     kind: spike
     description: "Capture headless versus on-screen frame output for a sample app to settle q-headless-parity before any reimplementation work treats headless scenes as ground truth."
     source_phase: architecture
+    status: pending
+  -
+    id: post-gpu-fallback
+    kind: spike
+    description: "B7a Q2: Observe per-host initialization with unavailable GPU device or surface; distinguish a software rasterizer from no usable device and record app-visible outcomes."
+    source_phase: reimplementation-spec
+    status: pending
+  -
+    id: post-frame-scheduling
+    kind: spike
+    description: "B7a Q3: Observe request, redraw, and delivered cadence across X11, Wayland, Windows, and web; record gaps where presentation cannot be observed."
+    source_phase: reimplementation-spec
     status: pending

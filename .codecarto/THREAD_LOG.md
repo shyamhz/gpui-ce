@@ -40,3 +40,4 @@ grep -E '^- [0-9]{4}-[0-9]{2}-[0-9]{2}' .codecarto/THREAD_LOG.md | sort | uniq -
 - 2026-11-23 — protocols — Completed protocols and state; traced frame ownership, gesture claims, popup lifecycle, and text and platform handoffs. — [closeout](closeouts/2026-11-23-protocols.md)
 - 2026-11-23 — defect-scan-semantic — Completed concurrency, trust-boundary, and API contract scans with all findings dispositioned for porting. — [closeout](closeouts/2026-11-23-defect-scan-semantic.md)
 - 2026-11-23 — porting — Completed the porting bundle with all defect dispositions, acceptance routes, and runtime evidence limits. — [closeout](closeouts/2026-11-23-porting.md)
+- 2026-11-23 — reimplementation-spec — Completed the language-agnostic reimplementation spec with acceptance slices and explicit runtime limits. — [closeout](closeouts/2026-11-23-reimplementation-spec.md)
