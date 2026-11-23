@@ -6,9 +6,9 @@ GPUI-CE is a Rust library (API/SDK surface). No CLI, TUI, or bot surfaces exist.
 Contracts below are written against the public Rust API so a reimplementation
 in another language can honor the observable behavior without reading Rust.
 
-B2d + B2c + B2a scope (this revision): animation/timing, layout/measurement,
-and elements/composition contracts. Contracts for input/focus/keys (B2b),
-text (B2e), and supporting systems (B2f) follow in later blocks; their
+B2d + B2c + B2a + B2b scope (this revision): animation/timing, layout/measurement,
+elements/composition, and input/focus/keys contracts. Contracts for
+text (B2e) and supporting systems (B2f) follow in later blocks; their
 sections are marked PENDING, not absent.
 
 ## Feature Contracts
@@ -319,6 +319,113 @@ sections are marked PENDING, not absent.
 | **Owner (layer/package)** | `gpui` core (`elements/img.rs:42-51`, `svg.rs`, `surface.rs:13-109`, `anchored.rs`, `container_query.rs:33-39`) |
 | **Evidence** | Observed fact: source-variant enums + builder signatures |
 
+### API/SDK — input, focus, and keys (B2b)
+
+#### C21 Keystroke identity
+
+| Field | Value |
+|---|---|
+| **Feature** | `Keystroke { modifiers, key, key_char }` produced by the platform |
+| **Trigger or input** | Physical key press on the host layout |
+| **Defaults** | `key` = printed character, or ASCII-equivalent on non-ASCII layouts (Thai `ๆ` → `q`); `key_char` = typed character (`s` → `s`, `option-s` → `ß`, `cmd-s` → `None`) |
+| **Observable output** | Bindings match on `key` (+ modifiers); text input consumes `key_char` |
+| **Side effects** | None |
+| **Persisted state** | None |
+| **Error behavior** | `Keystroke::parse` returns `Result<_, InvalidKeystrokeError>` (markdown-renderable error); invalid keymap strings fail at parse, not silently |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`platform/keystroke.rs:18-60`) |
+| **Evidence** | Observed fact: struct docs + `InvalidKeystrokeError` |
+
+#### C22 Binding precedence
+
+| Field | Value |
+|---|---|
+| **Feature** | `Keymap::bindings_for_input` / `possible_bindings_for_input` ordering |
+| **Trigger or input** | Keystroke sequence + key-context stack along the focus dispatch path |
+| **Defaults** | Deeper context wins (Editor > Pane > Workspace); context-less bindings rank as deepest; ties broken by reverse insertion order (user bindings added after built-ins win) |
+| **Observable output** | Matching bindings in precedence order; boolean whether longer input could still match |
+| **Side effects** | None |
+| **Persisted state** | Keymap registry |
+| **Error behavior** | Disabled (`null`) bindings never returned; a null suppresses only equal-or-weaker precedence (base null hides defaults, user bindings still apply) |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`keymap.rs:140-200` incl. precedence docs) |
+| **Evidence** | Observed fact: `all_bindings_for_input` / `bindings_for_input` docs + `match_keystrokes` (`binding.rs:89-101`) |
+
+#### C23 Multi-keystroke dispatch with pending input
+
+| Field | Value |
+|---|---|
+| **Feature** | Prefix accumulation, timeout flush, replay-as-text |
+| **Trigger or input** | Keystroke sequence that is a strict prefix of some binding |
+| **Defaults** | Pending keystrokes stored per focus; 1s timeout (`Duration::from_secs(1)`, hardcoded) flushes via `flush_dispatch` |
+| **Observable output** | While pending: nothing dispatched, `pending_input_changed` notified; on full match: bindings fire; on mismatch/timeout: unmatched suffix replayed as text input |
+| **Side effects** | Timer spawned only when needed (`pending_has_binding` or text input requires timeout); focus change or blur clears pending state |
+| **Persisted state** | `pending_input { keystrokes, focus, timer }` per window |
+| **Error behavior** | Unmatched input is never swallowed — it is replayed as text or dropped only after replay resolution |
+| **Retry or recovery behavior** | Suffix retried against the tree after prefix replay (`dispatch_key` recursion) |
+| **Owner (layer/package)** | `gpui` core (`key_dispatch.rs:480-560`; `window.rs:6357-6420`) |
+| **Evidence** | Observed fact: `dispatch_key` pending/match/replay logic; timeout task; `flush_dispatch` |
+
+#### C24 Dispatch order: interceptors → handlers → keymap → IME
+
+| Field | Value |
+|---|---|
+| **Feature** | `Window::dispatch_event` / `dispatch_keystroke` pipeline |
+| **Trigger or input** | Any `PlatformInput` (17-type enum family incl. key/mouse/touch/file-drop) |
+| **Defaults** | `propagate_event = true`, `default_prevented = false` per event; input modality tracked (Keyboard/Mouse/Touch) with hover suppression during keyboard modality |
+| **Observable output** | Handlers run first (can `stop_propagation`); keystrokes then go through keymap matching; unmatched `key_char` input falls through to the focused text input handler; unhandled returns false |
+| **Side effects** | Mouse position/modifier caching on the window; modality-change refresh |
+| **Persisted state** | `pending_input`, modality, mouse position |
+| **Error behavior** | Interceptors can stop propagation before matching; `prevent_default` flag recorded |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`window.rs:5829-5920`, `6340-6420`) |
+| **Evidence** | Observed fact: `dispatch_keystroke` fallthrough chain; modality tracking (`dispatch_event` head) |
+
+#### C25 Focus model
+
+| Field | Value |
+|---|---|
+| **Feature** | `FocusHandle` / `Window::focus` / `blur` / tab order |
+| **Trigger or input** | `handle.focus()` / `window.blur()` / tab navigation (`tab_index`, `tab_stop`) |
+| **Defaults** | Handles are ref-counted with weak downgrade; `tab_stop(false)` excludes from tab order |
+| **Observable output** | `is_focused` / `contains_focused`; focus change bumps `focus_generation` (wrapping) and refreshes; pending keystrokes cleared on focus change and blur |
+| **Side effects** | Refresh on change; `disable_focus` blocks all future focusing |
+| **Persisted state** | `FocusMap`, current `focus: Option<FocusId>` per window |
+| **Error behavior** | Focus on a released handle is a no-op via weak upgrade (`for_id` returns `None`) |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`window.rs:550-640`, `2372-2400`) |
+| **Evidence** | Observed fact: handle struct + focus/blur bodies |
+
+#### C26 Mouse dispatch phases
+
+| Field | Value |
+|---|---|
+| **Feature** | Capture → target → bubble dispatch with hit-test occlusion |
+| **Trigger or input** | Mouse events resolved against hitboxes |
+| **Defaults** | Occluding hitboxes (`InteractiveElement::occlude`) suppress mouse/hover/scroll/tooltip for everything behind (equivalent to a capture-phase handler calling `stop_propagation` when hovered) |
+| **Observable output** | Handlers per phase; `DispatchEventResult { propagate }`; `default_prevented` flag |
+| **Side effects** | None beyond handler effects |
+| **Persisted state** | Per-frame hitbox lists |
+| **Error behavior** | None |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`HitboxBehavior` docs `window.rs:1021-1040`; `dispatch_event`) |
+| **Evidence** | Observed fact: behavior docs; propagate/prevent flags |
+
+#### C27 Touch, gesture, scroll, file-drop
+
+| Field | Value |
+|---|---|
+| **Feature** | Portable gesture recognition + raw input events |
+| **Trigger or input** | Raw touch streams, scroll wheels, OS file drops |
+| **Defaults** | Single in-core recognizer arena: recognizers compete for in-flight touches, winners claim them, losers are cancelled |
+| **Observable output** | Recognized gestures surface as semantic events where possible: tap → `ClickEvent::Touch`, pan → `ScrollWheelEvent` with `TouchPhase`, pinch → `PinchEvent`; `FileDrop(FileDropEvent)` for OS drops; `OngoingScroll` filtering with iOS/Android physics tuning |
+| **Side effects** | None beyond event delivery |
+| **Persisted state** | In-flight touch state per gesture |
+| **Error behavior** | None specified |
+| **Retry or recovery behavior** | N/A |
+| **Owner (layer/package)** | `gpui` core (`gestures.rs` module docs + event types; `interactive.rs` `PlatformInput`) |
+| **Evidence** | Observed fact: module design docs; `ScrollPhysics::ios/android`; `TouchDragEvent`/`LongPressEvent` types |
+
 ## High-Value Behaviors
 
 B2d-relevant notes only; other blocks pending.
@@ -371,12 +478,21 @@ B2d scenarios only; other blocks append theirs at phase completion.
 | B2a-6 | Canvas order | Canvas with recording prepaint + paint | Draw one frame | Prepaint runs before paint with the same bounds |
 | B2a-7 | Deferred ordering | Deferred child with higher priority inside normal content | Draw | Deferred content paints after non-deferred, higher priority on top |
 | B2a-8 | Container query resize | `container_query` element under a resized parent | Draw after resize | Render fn receives the updated container size |
+| B2b-1 | Precedence depth | Same keystroke bound in Editor and Workspace contexts, focus in Editor | Press the key | Editor binding fires, Workspace does not |
+| B2b-2 | User-over-default | User binding added after a default for the same keystrokes | Press the key | User binding fires |
+| B2b-3 | Pending then match | Two-key binding, first key typed | Observe | Nothing dispatched yet; typing the second key fires the binding |
+| B2b-4 | Pending timeout replay | Two-key binding prefix typed, then pause > 1s with a text field focused | Wait | Prefix text appears in the field (replayed), no binding fires |
+| B2b-5 | Focus change clears pending | Prefix typed, then focus moves to another element | Type the second key | Treated as a fresh single keystroke, not a sequence completion |
+| B2b-6 | Null disable scoping | Base keymap nulls a binding that user keymap also defines | Press the key | User binding still fires |
+| B2b-7 | Occlusion | Occluding element in front of a hoverable element | Hover the overlap | Behind element is not hovered; no hover style |
+| B2b-8 | Modality hover suppression | Mouse resting over an item, then keyboard navigation begins | Press an arrow key | Hover highlight on the mouse-resting item is suppressed |
 
 ## Coverage and limits
 
 - Inspected scope (B2d): `motion.rs` (Motion/MotionSample/phase/dir/iteration, `sample`/`sample_at`, `checked_extent`, `resting_progress`); `spring.rs` (`step`/`step_ramp`/`propagator`/`is_settled`/`settle_time`); `animated.rs` (`set`/`restart`/`jump_to`/`adopt_completed_target`/`reset`/`sample`); `transition.rs` (`evaluate` frame pumping, `continuous`); `window.rs` `use_transition`/`use_keyed_transition`; `elements/animation.rs` (playlist, synced/unsynced elapsed, max_fps, reduce_motion); `app.rs` reduce-motion flag + epoch init; `style_transitions.rs` evaluate path + reduce branch.
 - Inspected scope (B2c): `TaffyLayoutEngine` (`request_layout`, `request_measured_layout`, `compute_layout`, `layout_bounds`, `parent_relative_layout_bounds`); `ToTaffy` style mapping incl. hardcoded taffy-`Ltr` + grid templates; length resolution (`DefiniteLength`/`AbsoluteLength` impls) + `rem_size` override stack; `AvailableSpace` semantics; direction metadata + `resolve_directions`/targeted recompute; `VerticalAlign` default + accessor; `EXPECT_MESSAGE` panic sites (internal invariant, not filed).
 - Inspected scope (B2a): element phase machine (`element.rs:670-955` guards + `compute_layout_as_root`); `ParentElement`/`IntoElement` composition + id-path scoping docs; `use_state`/`use_keyed_state`/`with_element_state` (`window.rs:4222-4300+`); `Hitbox`/`HitboxBehavior` (`window.rs:962-1041`); `uniform_list` ctor + `ListScrollEvent`; `canvas` callbacks; `deferred` priority; `Surface`/`ImageSource`/anchored/container-query builders.
+- Inspected scope (B2b): `Keystroke` identity rules + `InvalidKeystrokeError` (`platform/keystroke.rs`); binding precedence docs + `match_keystrokes` + null-disable scoping (`keymap.rs:140-200`, `binding.rs:89-117`); `dispatch_key` pending/match/replay + `flush_dispatch` + 1s timeout task (`key_dispatch.rs:480-560`, `window.rs:6357-6420`); `dispatch_keystroke` fallthrough chain + modality tracking (`window.rs:5829-5920`); focus model (`window.rs:550-640`, `2372-2400`); mouse phases + occlusion docs; gesture module docs + event types.
 - Skipped scope (later B2 blocks): input/focus/keys (B2b), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f); per-`Styled`-method styling catalog (presentation details, not composition).
 - Skipped scope (later B2 blocks): elements/composition (B2a), input/focus/keys (B2b), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f); full `Styled` method catalog and grid edge cases (behavioral spot-checks only).
 - Skipped scope (later B2 blocks): elements/composition (B2a), input/focus/keys (B2b), full style/taffy mapping (B2c), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f).
