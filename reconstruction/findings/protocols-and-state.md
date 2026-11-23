@@ -1,7 +1,7 @@
 # Protocols and State
 
-**Blocks B3a–B3c — events, state machines, rendering and scheduling.**
-B3d and phase validation are pending.
+**Blocks B3a–B3d — events, state machines, rendering, scheduling, text, and
+platform boundaries.** This is a source-based protocol reconstruction.
 Code locations below are relative to the repository root.
 
 
@@ -104,7 +104,7 @@ a frame callback at `crates/gpui_linux/src/linux/wayland/client.rs:1494`;
 the browser schedules `requestAnimationFrame` and has a separate resize-triggered
 frame path (`crates/gpui_web/src/window.rs:350-359,415-423`). These establish
 candidate trigger paths, not observed cadence, visibility behavior, or present
-timing. Windows trigger coverage remains for B3c/B3d.
+timing. See S11 for the Windows paint-message path.
 
 ### Application effect envelope
 
@@ -327,10 +327,95 @@ the Windows main queue (`crates/gpui_linux/src/linux/dispatcher.rs:32-38`,
 and completion separate when specifying ordering.
 
 
+### S9. Document shaping and inline measurement
+
+**Observed fact.** `crates/gpui/src/text_system/line_layout.rs:1123-1194`,
+`crates/gpui_ce_parley/src/text_system.rs:1601-1750,1835-1861,2059-2148`, and
+`crates/gpui/src/elements/div/inline.rs:72-127`.
+
+1. The window text cache looks up text, size, shaping runs, and options.
+   Reuse can repaint from the current runs; a previous-frame hit is moved
+   into the current cache. At frame finish the cache swaps generations and
+   clears the recycled maps. This is not persistent storage.
+
+2. The adapter takes a whole document, splits it at paragraph separators when
+   needed, intersects runs and bidi scopes with each paragraph, and makes
+   inline indices local. It shapes each paragraph, then reassembles visual
+   lines and paint fragments with source indexing. Bidi preparation precedes
+   paragraph shaping; it is not a transformation of the application's
+   original UTF-8 storage (see also the source-index fixture at
+   `crates/gpui_ce_parley/src/text_system.rs:3109`).
+
+3. A width controls soft breaks; horizontal alignment is a separate concern.
+   For a clamp budget `n`, the paragraph breaker takes up to `max(n−1, 0)`
+   width-limited breaks and calls `break_remaining` with unbounded advance.
+   For subsequent paragraphs the remaining budget is reduced by the visual
+   rows already produced, but hard breaks are still preserved.
+   **Correction to contracts C28/B2e-2:** the two-row example is a
+   single-paragraph fixture; a clamp is not a universal document row cap
+   or an ellipsis operation.
+
+4. Inline layout can carry atomic boxes. In the inspected `Div` truncation
+   path, the presence of boxes bypasses measured text truncation. Otherwise,
+   probe without clamp, then measure grapheme-boundary candidates with the
+   configured affix if the document does not fit. Keep this element policy
+   separate from the backend break budget.
+
+### S10. Platform-to-editor text input
+
+**Observed fact.** The paint-registered input handler is the editor-facing
+boundary, distinct from shortcut matching. Its ranges are UTF-16 code-unit
+offsets, unlike shaping queries that use UTF-8 byte positions (C29).
+GPUI's conversion helpers clamp past the string and snap interior code-unit
+or byte offsets to the end of the affected scalar, not necessarily to a
+grapheme boundary. See `crates/gpui/src/input.rs:7-32,35-98`,
+`crates/gpui/src/platform.rs:2378-2421`, and the
+handler installation in `crates/gpui/src/window.rs:3270-3295`.
+
+| Adapter / window carrier | Source-observed composition path |
+|---|---|
+| macOS — AppKit application and native window (`crates/gpui_macos/src/platform.rs:511,678`) | `NSTextInputClient` bridges insert, set-marked, and unmark callbacks. The adapter extracts strings from attributed input and maps replacement/selection ranges to optional handler arguments (`crates/gpui_macos/src/window.rs:447-477,3482-3528`). |
+| Windows — message loop and native window (`crates/gpui_windows/src/platform.rs:440-454,571`) | `WM_IME_COMPOSITION` checks result then composition flags. Result text replaces; composition text replaces and marks, optionally with a caret range. UTF-16 text is converted lossily. Zero flags dispatch an empty replacement (`crates/gpui_windows/src/events.rs:156-157,737-779`). |
+| Wayland — Linux platform client; popup and layer roles below | Text-input-v3 enter/leave enable/disable the adapter IME path. Preedit is staged; `Done(serial)` processes staged mark or invokes the adapter's delete-text operation if none is staged. Commit clears composing; a one-byte UTF-8 commit takes the synthetic keydown branch, others take insertion (`crates/gpui_linux/src/linux/wayland/client.rs:2043-2109`). This describes the implementation, not all compositor delivery sequences. |
+| X11 — Linux platform client with optional XIM | The XIM handler creates a context with preedit callbacks and stages commit, preedit, or forwarded key events. Its draw callback does not carry XIM feedback or incremental caret/change fields to the staged event (`crates/gpui_linux/src/linux/x11/xim_handler.rs:32-140`). |
+| Web — browser callbacks and web window (`crates/gpui_web/src/platform.rs:301,353`) | Start sets composing; update replaces and marks. End clears composing, commits final text only if a marked range still exists, then unmarks, adopts the input mirror baseline, and schedules sync. The guard avoids inserting a second copy after a caret move unmarks the original composition (`crates/gpui_web/src/events.rs:1108-1154`). |
+
+No adapter-independent IME message ordering or restart/replay stream is
+asserted. Preserve marked vs committed text, optional ranges, and focus
+boundaries; do not infer native behavior from the simulated key helper.
+
+### S11. Platform window roles and frame-source limits
+
+**Observed fact.** Linux/FreeBSD chooses the platform client through the
+configuration seam in C38 (`crates/gpui_linux/src/linux.rs:27-55`);
+the Linux platform layer delegates run/open-window work to the selected
+client (`crates/gpui_linux/src/linux/platform.rs:270,375`).
+
+- Wayland anchored popups use the configure/dismiss path in S5. A layer-shell
+  window instead requests a layer surface. If the compositor global is absent
+  the constructor returns `LayerShellNotSupportedError`; otherwise it sends
+  output, layer, namespace, size, anchor, keyboard mode, and applicable
+  margin/exclusive requests. This is not an ordinary toplevel or an in-window
+  overlay (`crates/gpui_linux/src/linux/wayland/window.rs:162-205`).
+
+- The Windows adapter routes `WM_PAINT` to its paint handler
+  (`crates/gpui_windows/src/events.rs:109,335`), distinct from
+  the X11, Wayland, and web trigger paths in the event catalog. These mappings
+  narrow the implementation portion of `q-frame-scheduling`; they do not
+  establish effective cadence or presentation behavior on a live host.
+
+
 ## Persistent Schema Notes
 
-Pending. The event envelopes cataloged here are in-memory values; that does not
-establish the absence of other persisted formats.
+These are the storage and handoff formats surfaced by the inspected
+framework paths, not a claim about files maintained by downstream apps.
+
+| Boundary | Shape, ownership, and persistence |
+|---|---|
+| Key bindings and actions — observed fact | Callers supply typed bindings to `App::bind_keys`; `KeyBinding::load` parses a keystroke string and optional context. Named action construction accepts a JSON value, defaults absent params to `{}`, and distinguishes unknown name from invalid payload. These APIs do not define an on-disk keymap filename, version, or file-reload rule. The null/precedence behavior in C22 is not proof that GPUI owns a JSON keymap loader (`crates/gpui/src/app.rs:2750`, `crates/gpui/src/keymap/binding.rs:30-101`, `crates/gpui/src/action.rs:405-430`). |
+| Files and image assets — observed fact | Asset sources load byte buffers by path; the image resource and decoder path consume formats selected by resource/decode policy. Clipboard image formats enumerate native payload options. These are asset inputs, not a versioned app-state format (`crates/gpui/src/assets.rs:18-29`, `crates/gpui/src/elements/img.rs:605-745`, `crates/gpui/src/platform.rs:3582-3619`). |
+| Clipboard and credentials — observed fact | Clipboard uses a list of typed string/image/path entries and then adapter-specific host formats. Credential storage is mutable by URL key through the platform, not a GPUI-owned file; native storage format, durability, and locking are outside this contract (C35–C36; `crates/gpui/src/platform.rs:3446-3461`, `crates/gpui/src/app.rs:1826-1850`). |
+| Runtime state and configuration — observed fact | Window/scene snapshots, effect queues, and dispatched events are in memory (S1–S8). C38's configuration reads process environment; that selection path does not read or maintain a configuration file. No restart serialization follows from these carriers. |
 
 
 ## Compatibility Hazards
@@ -340,6 +425,8 @@ establish the absence of other persisted formats.
 | Scroll units are tagged | Portability hazard | Preserve pixels vs lines and phase before policy-level conversion (`interactive.rs:522-564`). |
 | Contact prediction is optional | Portability hazard | Do not conflate a predicted coordinate with the actual contact position (`interactive.rs:119-135`). |
 | Close decision is distinct from notification | Portability hazard | An asynchronous notification cannot substitute for the synchronous boolean decision (`platform.rs:945-947`). |
+| IME ranges and shaping indices use different units | Portability hazard | Convert at the input boundary; a UTF-16 interior offset and a shaping cluster interior have different snapping rules (S10, C29). |
+| Layer role depends on a compositor capability | Portability hazard | An in-window overlay is not a native layer surface; preserve unsupported/error behavior separately from positioning (S11). |
 
 
 ## Coverage and limits
@@ -353,13 +440,19 @@ establish the absence of other persisted formats.
 - **Inspected (B3c):** record/replay and render-plan compilation; wgpu
   acquire/submit/present; frame demand and callback drain; executor handoff,
   priority queue selection, timers and dedicated sessions.
-- **Skipped:** exhaustive per-adapter event conversion and IME sequencing,
-  complete GPU recovery and renderer parity, and persisted schemas.
+- **Inspected (B3d):** text shaping and inline measurement, host-to-editor
+  composition, window role/trigger seams, and persistent format ownership.
+- **Skipped:** exhaustive per-adapter emission, on-host IME sequencing,
+  native clipboard encodings, complete GPU recovery and renderer parity.
 - **Evidence basis:** source inspection, with completed architecture and
   contracts outputs for context. No runtime tests or traces were run.
 - **Known blind spots:** observed pacing, platform-specific emission, and
   exhaustive frame-cache invalidation across all producers and rollback paths.
-- **Coverage disposition:** PARTIAL — B3a through B3c recorded; B3d pending.
+- **Secondary outputs:** public surfaces, runtime lifecycle, state and storage,
+  and configuration summaries remain unchanged. The new flows and the C28
+  correction are recorded here rather than duplicated.
+- **Coverage disposition:** COMPLETE for the planned blocks and scoped
+  protocol catalog; not an exhaustive native or external format reference.
 
 
 ## Open Questions
@@ -371,13 +464,21 @@ unverified. No question is closed here.
 
 ## Carry-Forward
 
-Responses recorded in S3–S5. These do not close the independent runtime
-questions. Framework carry-forward closure awaits the protocols phase handoff.
+Responses for `mech-CF1` and `contracts-CF1` are recorded in S3–S5.
+The handoff closes those investigation routes, not the independent runtime
+questions or the reachability of every possible cache violation.
 
 
 ## Validation
 
-Phase validation pending B3d. B3a checked all 14 input variants against
-source. B3b recorded guarded transitions and distinguished frame publication,
-effect draining, and native configuration acknowledgements. B3c traced the
-render-plan and scheduling paths without asserting measured timing.
+| # | Criterion | Result | Evidence |
+|---|---|---|---|
+| 1 | An event catalog is documented. | PASS | Normalized input, lifecycle callbacks, and effect envelopes. |
+| 2 | A state machine is documented. | PASS | S1–S11 describe guarded transitions, lifecycle, and carriers. |
+| 3 | Persistent schema notes are documented. | PASS | Boundary table separates asset/application/host formats from volatile state. |
+| 4 | Compatibility hazards are documented. | PASS | Compatibility table and backend/ordering caveats. |
+| 5 | Findings are marked with evidence levels. | PASS | Source observations are distinguished from the frame-reuse inference and runtime unknowns. |
+| 6 | Coverage and limits name inspected scope, skipped scope, evidence basis, and blind spots. | PASS | Coverage and limits, Open Questions and Carry-Forward. |
+
+**Validated by:** 2026-11-23 (protocols phase)
+**Overall:** PASS
