@@ -6,10 +6,8 @@ GPUI-CE is a Rust library (API/SDK surface). No CLI, TUI, or bot surfaces exist.
 Contracts below are written against the public Rust API so a reimplementation
 in another language can honor the observable behavior without reading Rust.
 
-B2d + B2c + B2a + B2b scope (this revision): animation/timing, layout/measurement,
-elements/composition, and input/focus/keys contracts. Contracts for
-text (B2e) and supporting systems (B2f) follow in later blocks; their
-sections are marked PENDING, not absent.
+Blocks B2d, B2c, B2a, B2b, and B2e cover animation, layout, composition,
+input, and text. Supporting systems (B2f) are **pending**.
 
 ## Feature Contracts
 
@@ -328,13 +326,13 @@ sections are marked PENDING, not absent.
 | **Feature** | `Keystroke { modifiers, key, key_char }` produced by the platform |
 | **Trigger or input** | Physical key press on the host layout |
 | **Defaults** | `key` = printed character, or ASCII-equivalent on non-ASCII layouts (Thai `ๆ` → `q`); `key_char` = typed character (`s` → `s`, `option-s` → `ß`, `cmd-s` → `None`) |
-| **Observable output** | Bindings match on `key` (+ modifiers); text input consumes `key_char` |
+| **Observable output** | Binding matching also tries a distinct `key_char` before the `key`/modifier pair. That character match retains only Control and Platform modifiers outside Windows; on Windows it requires an unmodified binding. Text input consumes `key_char`. |
 | **Side effects** | None |
 | **Persisted state** | None |
 | **Error behavior** | `Keystroke::parse` returns `Result<_, InvalidKeystrokeError>` (markdown-renderable error); invalid keymap strings fail at parse, not silently |
 | **Retry or recovery behavior** | N/A |
 | **Owner (layer/package)** | `gpui` core (`platform/keystroke.rs:18-60`) |
-| **Evidence** | Observed fact: struct docs + `InvalidKeystrokeError` |
+| **Evidence** | Observed fact: `platform/keystroke.rs:18-60,82-113` |
 
 #### C22 Binding precedence
 
@@ -371,7 +369,7 @@ sections are marked PENDING, not absent.
 | Field | Value |
 |---|---|
 | **Feature** | `Window::dispatch_event` / `dispatch_keystroke` pipeline |
-| **Trigger or input** | Any `PlatformInput` (17-type enum family incl. key/mouse/touch/file-drop) |
+| **Trigger or input** | Any `PlatformInput`, including keyboard, mouse, touch, and file-drop events (`interactive.rs:771-800`) |
 | **Defaults** | `propagate_event = true`, `default_prevented = false` per event; input modality tracked (Keyboard/Mouse/Touch) with hover suppression during keyboard modality |
 | **Observable output** | Handlers run first (can `stop_propagation`); keystrokes then go through keymap matching; unmatched `key_char` input falls through to the focused text input handler; unhandled returns false |
 | **Side effects** | Mouse position/modifier caching on the window; modality-change refresh |
@@ -426,6 +424,55 @@ sections are marked PENDING, not absent.
 | **Owner (layer/package)** | `gpui` core (`gestures.rs` module docs + event types; `interactive.rs` `PlatformInput`) |
 | **Evidence** | Observed fact: module design docs; `ScrollPhysics::ios/android`; `TouchDragEvent`/`LongPressEvent` types |
 
+### API/SDK — text behavior (B2e)
+
+Paths in this section are relative to the repository root. Source assertions below were
+inspected, not executed.
+
+#### C28. Shaping and visual rows
+
+| Field | Value |
+|---|---|
+| **Trigger or input** | Shape UTF-8 text with a font size and ordered style runs. Run lengths count bytes, cover the whole string, and end at character boundaries. |
+| **Defaults** | Wrap width and row clamp are optional; paragraph base direction defaults to automatic. Alignment width is independent of wrap width. |
+| **Observable output** | One document layout accounts for explicit line breaks, trailing empty rows, soft wrapping, and the visual row clamp. A font/style run describes a source span, not a row or a glyph. |
+| **Side effects and state** | In-memory layout reuse; no persistent write. |
+| **Error and recovery** | Use the document API for multiline input: the single-line wrapper only *debug-asserts* against `\n`, despite its unconditional panic wording. The document wrapper returns `Result` but wraps the layout in `Ok`; the Parley adapter uses `expect` if its internal layout fails. Do not assume malformed run input returns a recoverable error. |
+| **Owner and evidence** | Observed fact: `crates/gpui/src/text_system/window_text_system.rs:38-104`, `crates/gpui/src/text_system/text_layout.rs:6-41`, and `crates/gpui_ce_parley/src/text_system.rs:4218-4251,4312-4354` (document fixtures and assertions), `:2500-2506` (adapter). |
+
+#### C29. Hit testing and caret geometry
+
+| Field | Value |
+|---|---|
+| **Trigger or input** | Query a shaped document with a pixel point and line height, or with a UTF-8 byte index and optional caret affinity. |
+| **Defaults** | Position lookup by bare byte index attaches the caret to the next cluster; at a shared wrap boundary this selects the following row. |
+| **Observable output** | A cluster hit gives its logical start, including whitespace. The closest-caret query selects cluster boundaries; for an RTL cluster the visual left edge corresponds to its logical end. Position lookup snaps interior indices to the start of an atomic cluster. Visual caret movement is separate from finding a logical neighbor. |
+| **Side effects and state** | Read-only against a shaped layout; no persistent write. |
+| **Error and recovery** | Off-line points return the appropriate edge result in the error branch, not an empty hit. Index-to-position returns `None` past the source length. Affinity-aware lookup can distinguish caret placements that a byte index alone cannot. |
+| **Owner and evidence** | Observed fact: `crates/gpui/src/text_system/line_layout.rs:710-813`; off-line caret results also asserted in `crates/gpui_ce_parley/src/text_system.rs:4768-4772`. |
+
+#### C30. Font selection and fallback
+
+| Field | Value |
+|---|---|
+| **Trigger or input** | Resolve a font descriptor against the adapter's catalog, or shape text with descriptor-specific fallbacks. |
+| **Defaults** | A newly constructed Parley adapter has an empty catalog. Bootstrap may add system fonts or register explicit font bytes. |
+| **Observable output** | Canonical face lookup tries the descriptor family, its ordered fallbacks, then configured adapter fallbacks. For `.SystemUIFont`, the generic system UI family is tried before its configured named substitute. Face lookup order is not an exhaustive claim about Fontique's per-character substitution. |
+| **Side effects and state** | Font registration changes the in-memory catalog and advances its generation, clearing Parley's paragraph caches. No writes to host font storage are required by these APIs. |
+| **Error and recovery** | Canonical lookup returns an error when no family resolves. Adding a suitable font or configuring a fallback can make a later lookup succeed. Installed font sets and resulting glyph choices are not portable fixtures. |
+| **Owner and evidence** | Observed fact: `crates/gpui_ce_parley/src/text_system.rs:1469-1538,1542-1599,2708-2757`. The fallback test uses explicit font fixtures and tests generic, named, and descriptor fallback precedence. |
+
+#### C31. Rasterization boundary
+
+| Field | Value |
+|---|---|
+| **Trigger or input** | Paint a shaped glyph at its resolved placement and request a raster for its selected font instance, glyph, and draw parameters. |
+| **Defaults** | Parley provides layout; the platform selects the injected rasterizer. There is no promise of identical system font metrics or pixels across hosts. |
+| **Observable output** | The rasterizer receives the face and variations identified by the shaped font instance. The window looks up or inserts glyph data in its atlas before painting; shaping alone does not produce the final pixels. |
+| **Side effects and state** | Raster and atlas data are held in memory; no persistent write is specified. |
+| **Error and recovery** | Unknown font IDs and raster failures return errors at the adapter boundary; atlas lookup/insertion errors propagate from the window glyph-paint path. Do not infer a universal retry or replacement-glyph policy. |
+| **Owner and evidence** | Observed fact: `crates/gpui_ce_parley/src/text_system.rs:2431-2448`, `crates/gpui/src/window.rs:4892-4901`. Adapter examples: `crates/gpui_linux/src/linux/platform.rs:139`, `crates/gpui_web/src/platform.rs:163`, `crates/gpui_macos/src/text_system.rs:20`, `crates/gpui_windows/src/direct_write.rs:87`. |
+
 ## High-Value Behaviors
 
 B2d-relevant notes only; other blocks pending.
@@ -448,7 +495,7 @@ None found in B2d scope. (Docs-vs-code comparison for animation: doc comments on
 
 ## Black-Box Acceptance List
 
-B2d scenarios only; other blocks append theirs at phase completion.
+Scenarios below are planned acceptance checks, not reported test runs.
 
 | # | Scenario | Precondition | Action | Expected Outcome |
 |---|---|---|---|---|
@@ -486,6 +533,12 @@ B2d scenarios only; other blocks append theirs at phase completion.
 | B2b-6 | Null disable scoping | Base keymap nulls a binding that user keymap also defines | Press the key | User binding still fires |
 | B2b-7 | Occlusion | Occluding element in front of a hoverable element | Hover the overlap | Behind element is not hovered; no hover style |
 | B2b-8 | Modality hover suppression | Mouse resting over an item, then keyboard navigation begins | Press an arrow key | Hover highlight on the mouse-resting item is suppressed |
+| B2e-1 | Empty and trailing rows (C28) | Fixed font; no clamp; wide enough to avoid wrapping | Shape `""` and `"one\n"` separately | Empty text yields one empty row, width zero, no paint fragments; trailing break yields a second row |
+| B2e-2 | Visual-row clamp (C28) | Fixed font and width for which the unclamped input wraps to at least three rows | Shape with clamp set to two | Exactly two visual rows |
+| B2e-3 | Line-edge hit (C29) | A shaped LTR line and y-coordinate inside that row | Query the closest caret strictly left and strictly right of the row | Both results signal an outside hit and report the respective row edge; indices are source byte boundaries |
+| B2e-4 | RTL cluster (C29) | A visible multi-byte RTL cluster with nonzero advance | Hit just inside each visual edge using the closest-caret query | Left maps to logical end, right to logical start; neither returns an interior byte |
+| B2e-5 | Explicit font precedence (C30) | Register two distinct fixture families A and B; adapter fallback starts with A; requested family unavailable | Resolve it first without and then with descriptor fallback B | First lookup returns A; second returns B |
+| B2e-6 | Raster error propagation (C31) | Controlled rasterizer returns an error for a known glyph on an atlas miss | Paint that glyph through the window glyph API | Call reports a failure; it does not claim a successful atlas insertion |
 
 ## Coverage and limits
 
@@ -493,12 +546,13 @@ B2d scenarios only; other blocks append theirs at phase completion.
 - Inspected scope (B2c): `TaffyLayoutEngine` (`request_layout`, `request_measured_layout`, `compute_layout`, `layout_bounds`, `parent_relative_layout_bounds`); `ToTaffy` style mapping incl. hardcoded taffy-`Ltr` + grid templates; length resolution (`DefiniteLength`/`AbsoluteLength` impls) + `rem_size` override stack; `AvailableSpace` semantics; direction metadata + `resolve_directions`/targeted recompute; `VerticalAlign` default + accessor; `EXPECT_MESSAGE` panic sites (internal invariant, not filed).
 - Inspected scope (B2a): element phase machine (`element.rs:670-955` guards + `compute_layout_as_root`); `ParentElement`/`IntoElement` composition + id-path scoping docs; `use_state`/`use_keyed_state`/`with_element_state` (`window.rs:4222-4300+`); `Hitbox`/`HitboxBehavior` (`window.rs:962-1041`); `uniform_list` ctor + `ListScrollEvent`; `canvas` callbacks; `deferred` priority; `Surface`/`ImageSource`/anchored/container-query builders.
 - Inspected scope (B2b): `Keystroke` identity rules + `InvalidKeystrokeError` (`platform/keystroke.rs`); binding precedence docs + `match_keystrokes` + null-disable scoping (`keymap.rs:140-200`, `binding.rs:89-117`); `dispatch_key` pending/match/replay + `flush_dispatch` + 1s timeout task (`key_dispatch.rs:480-560`, `window.rs:6357-6420`); `dispatch_keystroke` fallthrough chain + modality tracking (`window.rs:5829-5920`); focus model (`window.rs:550-640`, `2372-2400`); mouse phases + occlusion docs; gesture module docs + event types.
-- Skipped scope (later B2 blocks): input/focus/keys (B2b), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f); per-`Styled`-method styling catalog (presentation details, not composition).
-- Skipped scope (later B2 blocks): elements/composition (B2a), input/focus/keys (B2b), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f); full `Styled` method catalog and grid edge cases (behavioral spot-checks only).
-- Skipped scope (later B2 blocks): elements/composition (B2a), input/focus/keys (B2b), full style/taffy mapping (B2c), text shaping (B2e), supporting systems incl. keyring/clipboard trust (B2f).
-- Evidence basis: source inspection (code + doc comments as specified behavior).
+- Inspected scope (B2e): document layout API and fixture assertions, caret query semantics,
+  canonical font fallback, glyph dispatch, and atlas error propagation (C28–C31).
+- Skipped scope: supporting systems (B2f); full style/grid matrix; shaping engine internals,
+  per-character fallback, rasterizer internals, and platform-dependent pixel comparison.
+- Evidence basis: source inspection, API docs, and checked-in test assertions. No runtime tests run.
 - Known blind spots: wall-clock pacing of frame timestamps (stays with `q-frame-scheduling`, needs runtime); exact `now` source in style-transition path (frame time vs read time — read as evaluate-time `now`, confirm in B2c/protocols if it matters); gesture/keyboard timing (B2b/B2e).
-- Coverage disposition: PARTIAL (B2d block complete to its exit test; B2a–B2f pending by plan).
+- Coverage disposition: PARTIAL (B2d, B2c, B2a, B2b, and B2e recorded; B2f pending).
 
 ## Open Questions
 
@@ -520,7 +574,7 @@ None from B2d (no downstream phase is active yet for routing; mech-CF1 to protoc
 
 ## Validation
 
-<!-- Phase incomplete: B2a–B2f pending. Validation runs at phase completion. -->
+<!-- Phase incomplete: B2f pending. Validation runs at phase completion. -->
 
 | # | Criterion | Result | Evidence |
 |---|-----------|--------|----------|
