@@ -6,8 +6,9 @@ GPUI-CE is a Rust library (API/SDK surface). No CLI, TUI, or bot surfaces exist.
 Contracts below are written against the public Rust API so a reimplementation
 in another language can honor the observable behavior without reading Rust.
 
-Blocks B2d, B2c, B2a, B2b, and B2e cover animation, layout, composition,
-input, and text. Supporting systems (B2f) are **pending**.
+The contracts cover two surfaces: the in-process component API (animation,
+layout, composition, input, and text) and platform-facing SDK services
+(accessibility, clipboard, credentials, popup windows, and desktop configuration).
 
 ## Feature Contracts
 
@@ -79,7 +80,7 @@ input, and text. Supporting systems (B2f) are **pending**.
 |---|---|
 | **Feature** | Declarative `Animation` element (sequential motion playlist) |
 | **Trigger or input** | `Animation::new(motion)` + `.repeat()` / `.repeat_synced()` / `.with_easing()` / `.with_max_fps()`; playlist advances when the current motion's sample goes inactive |
-| **Defaults** | Unsynced (elapsed measured from playlist start); `repeat` restarts the playlist; `repeat_synced` anchors elapsed time to the shared App epoch so animations on different elements advance in lockstep |
+| **Defaults** | Unsynced (elapsed measured from the current item's start). `repeat` loops the configured motion, not the playlist; `repeat_synced` also uses the shared app epoch. |
 | **Observable output** | Animator closure receives `(element, animation_ix, delta)` per frame; `max_fps` throttles via timer + delayed frame |
 | **Side effects** | Frame scheduling while any playlist item is active; `reduce_motion` jumps to the resting progress of the LAST animation and marks done |
 | **Persisted state** | `AnimationState { start, animation_ix }` per element |
@@ -247,7 +248,7 @@ input, and text. Supporting systems (B2f) are **pending**.
 | Field | Value |
 |---|---|
 | **Feature** | `Hitbox` registration + `mouse_hit_test` |
-| **Trigger or input** | Elements insert hitboxes during paint with bounds + `HitboxBehavior` |
+| **Trigger or input** | Elements insert hitboxes during prepaint with bounds and `HitboxBehavior` (`window.rs:5530-5555`). |
 | **Defaults** | `Normal` (no effect on others); occluding behavior blocks mouse events, hover styles, and tooltips for hitboxes behind |
 | **Observable output** | `HitTest` inspectable via `mouse_hit_test()`; `hitbox.is_hovered()` reflects occlusion |
 | **Side effects** | None beyond registration |
@@ -364,14 +365,14 @@ input, and text. Supporting systems (B2f) are **pending**.
 | **Owner (layer/package)** | `gpui` core (`key_dispatch.rs:480-560`; `window.rs:6357-6420`) |
 | **Evidence** | Observed fact: `dispatch_key` pending/match/replay logic; timeout task; `flush_dispatch` |
 
-#### C24 Dispatch order: interceptors → handlers → keymap → IME
+#### C24 Keyboard dispatch and character input
 
 | Field | Value |
 |---|---|
 | **Feature** | `Window::dispatch_event` / `dispatch_keystroke` pipeline |
 | **Trigger or input** | Any `PlatformInput`, including keyboard, mouse, touch, and file-drop events (`interactive.rs:771-800`) |
 | **Defaults** | `propagate_event = true`, `default_prevented = false` per event; input modality tracked (Keyboard/Mouse/Touch) with hover suppression during keyboard modality |
-| **Observable output** | Handlers run first (can `stop_propagation`); keystrokes then go through keymap matching; unmatched `key_char` input falls through to the focused text input handler; unhandled returns false |
+| **Observable output** | Interceptors precede keymap matching. Matching actions are tried before ordinary key-event dispatch unless character input takes priority. The `dispatch_keystroke` helper sends `key_char` to the input handler if its synthetic keydown still propagates. |
 | **Side effects** | Mouse position/modifier caching on the window; modality-change refresh |
 | **Persisted state** | `pending_input`, modality, mouse position |
 | **Error behavior** | Interceptors can stop propagation before matching; `prevent_default` flag recorded |
@@ -398,7 +399,7 @@ input, and text. Supporting systems (B2f) are **pending**.
 
 | Field | Value |
 |---|---|
-| **Feature** | Capture → target → bubble dispatch with hit-test occlusion |
+| **Feature** | Capture and bubble dispatch with hit-test occlusion; no separate target phase in this loop. |
 | **Trigger or input** | Mouse events resolved against hitboxes |
 | **Defaults** | Occluding hitboxes (`InteractiveElement::occlude`) suppress mouse/hover/scroll/tooltip for everything behind (equivalent to a capture-phase handler calling `stop_propagation` when hovered) |
 | **Observable output** | Handlers per phase; `DispatchEventResult { propagate }`; `default_prevented` flag |
@@ -407,7 +408,7 @@ input, and text. Supporting systems (B2f) are **pending**.
 | **Error behavior** | None |
 | **Retry or recovery behavior** | N/A |
 | **Owner (layer/package)** | `gpui` core (`HitboxBehavior` docs `window.rs:1021-1040`; `dispatch_event`) |
-| **Evidence** | Observed fact: behavior docs; propagate/prevent flags |
+| **Evidence** | Observed fact: `window.rs:6213-6260` invokes listeners in stored order for capture and reverse order for bubble, stopping each pass when propagation is disabled. |
 
 #### C27 Touch, gesture, scroll, file-drop
 
@@ -473,9 +474,74 @@ inspected, not executed.
 | **Error and recovery** | Unknown font IDs and raster failures return errors at the adapter boundary; atlas lookup/insertion errors propagate from the window glyph-paint path. Do not infer a universal retry or replacement-glyph policy. |
 | **Owner and evidence** | Observed fact: `crates/gpui_ce_parley/src/text_system.rs:2431-2448`, `crates/gpui/src/window.rs:4892-4901`. Adapter examples: `crates/gpui_linux/src/linux/platform.rs:139`, `crates/gpui_web/src/platform.rs:163`, `crates/gpui_macos/src/text_system.rs:20`, `crates/gpui_windows/src/direct_write.rs:87`. |
 
-## High-Value Behaviors
+### Supporting services — component API (B2f)
 
-B2d-relevant notes only; other blocks pending.
+#### C32. Image loading and fallback
+
+| Field | Contract |
+|---|---|
+| **Trigger and defaults** | An image source is evaluated during layout. Loading and error replacement builders are both absent by default. The loader result distinguishes pending (`None`), ready, and failed. |
+| **Output and state** | Ready data supplies the image. With retained element state, pending data can display the loading view after the 200 ms delay; a timer notifies the view so layout can re-evaluate it. On error, a configured fallback becomes the replacement element. Loading state and cache entries are in memory, not a persistence contract. |
+| **Failure and recovery** | Error clears the pending indicator state. The loading timer is a redraw request, not an automatic fetch retry. Resource locations use the asset or image-cache path; custom loaders supply their own results. |
+| **Owner and evidence** | Observed fact: `crates/gpui/src/elements/img.rs:31-38,130-145,382-423,537-552`. |
+
+#### C33. Gesture recognition and scroll bounds
+
+| Field | Contract |
+|---|---|
+| **Trigger and defaults** | Raw touch enters the recognizer (C27); scrolling changes a container's in-memory offset. The default recognizer locks a sufficiently horizontal pan to the horizontal axis in the checked-in test. |
+| **Output and state** | Pan publishes scroll events. During layout the scrollable container clamps each offset to `[-maximum, 0]`, with a nonnegative maximum from padded content minus viewport. A pending scroll-to-bottom request sets the vertical offset to `-maximum`. |
+| **Failure and recovery** | If content shrinks or the viewport grows, the old offset is clamped to the new extent rather than retained out of bounds. No durable state or retry is involved. Recognition thresholds and momentum mechanics belong to the protocols investigation. |
+| **Owner and evidence** | Observed fact: `crates/gpui/src/gestures.rs:1370-1386` (axis-lock assertion), `crates/gpui/src/elements/div.rs:3143-3204` (rounding, clamping, and request consumption). |
+
+### Supporting services — platform-facing SDK (B2f)
+
+#### C34. Accessibility inspection and actions
+
+| Field | Contract |
+|---|---|
+| **Trigger and defaults** | Build the tree when accessibility is active; forcing it requests redraw and builds without an assistive client. Explicitly inaccessible application creation overrides forcing. |
+| **Output and state** | Last-frame tree is optional, with a build counter starting at zero and optional logical-pixel node bounds. IDs remain stable with element identity. These are in-memory observations. |
+| **Failure and recovery** | An absent tree is not an empty successful snapshot. On non-Wasm targets the programmatic action API tries the registered node listener before built-in click, focus, or blur. For a fresh observation, wait for a tree-producing frame after forcing. |
+| **Owner and evidence** | Observed fact: `crates/gpui/src/window.rs:7203-7286`; external assistive-client behavior is not established by these entry points. |
+
+#### C35. Clipboard
+
+| Field | Contract |
+|---|---|
+| **Trigger and defaults** | Read or replace the host clipboard. Synchronous read returns an optional item and is always `None` in the web adapter. Awaitable read reports an optional item or a typed read error. |
+| **Output and state** | Contents are host-owned. Primary-selection access is target-gated to Linux/FreeBSD; the Find pasteboard API is gated to macOS. Writing returns no acknowledgement; the web text-write path drops the browser promise. |
+| **Failure and recovery** | Do not use a web synchronous `None` as evidence that the host clipboard is empty. Use the async path to observe rejection or unavailability; no automatic retry is promised. |
+| **Owner and evidence** | Observed fact: `crates/gpui/src/app.rs:1740-1823`; `crates/gpui_web/src/platform.rs:556-630,691-703`. Actual browser permission grants are outside this contract. |
+
+#### C36. Credential-store adapter
+
+| Field | Contract |
+|---|---|
+| **Trigger and defaults** | Await storage, retrieval, or deletion of a username and password bytes keyed by a caller-supplied URL string. |
+| **Output and state** | Storage is delegated to the platform keychain where supported. `Ok(None)` means no item is reported; it does not prove a store is available. |
+| **Failure and recovery** | On web, read completes with `Ok(None)` and write/delete complete with an unsupported error. Failures are returned to callers; no retry or account lifecycle is provided. |
+| **Owner and evidence** | Observed fact: `crates/gpui/src/app.rs:1826-1850`; `crates/gpui_web/src/platform.rs:631-647`. |
+
+#### C37. Anchored platform popups
+
+| Field | Contract |
+|---|---|
+| **Trigger and defaults** | Open an `AnchoredPopup` using a parent handle and a rectangle in the parent's coordinate space. Defaults are centered placement, zero offset, no constraint adjustments, and no grab. This is not the in-window `anchored()` element from C20. |
+| **Output and state** | The Wayland adapter resolves the parent among its current windows. For an explicit grab it uses a recorded press serial if available; it supplies no grab if no such serial exists. Popup state is window-scoped, not durable. |
+| **Failure and recovery** | Missing Wayland parent returns an error. macOS, Windows, X11, and web reject this window kind with `PopupNotSupportedError`. The caller can choose an in-window overlay; no automatic fallback is promised. Actual compositor grant or dismissal is not asserted. |
+| **Owner and evidence** | Observed fact: `crates/gpui/src/platform/popup.rs:34-88`; `crates/gpui_linux/src/linux/wayland/client.rs:1074-1098`; rejection branches in `crates/gpui_macos/src/platform.rs:686`, `crates/gpui_windows/src/window.rs:424`, `crates/gpui_linux/src/linux/x11/window.rs:469`, and `crates/gpui_web/src/platform.rs:360`. |
+
+#### C38. Linux/FreeBSD backend and X11 scale overrides
+
+| Field | Contract |
+|---|---|
+| **Trigger and defaults** | `current_platform(true)` explicitly selects headless. Otherwise the selection checks for `ZED_HEADLESS` by presence, then nonempty `WAYLAND_DISPLAY` and `DISPLAY` for compiled-in backends, in that order. If none match, it chooses headless. |
+| **Output and state** | A process-local backend is constructed. In the X11 scale path, a positive normal numeric `GPUI_X11_SCALE_FACTOR` overrides detection; `randr` selects RandR lookup; unset or empty uses automatic detection. |
+| **Failure and recovery** | Selection is not a connectivity probe; the constructor does not try another backend after the chosen X11 initialization errors. Invalid scale values panic on the reached X11 path (mechanical F6.1), not warn-and-fallback. No persistent configuration write or retry is specified. |
+| **Owner and evidence** | Observed fact: `crates/gpui/src/platform.rs:107-135`; `crates/gpui_linux/src/linux.rs:27-55`; `crates/gpui_linux/src/linux/x11/client.rs:2535-2579,2775-2777`. |
+
+## High-Value Behaviors
 
 - **Frame pumping (follow-up behavior):** active transitions/animations re-request frames until settled/completed (`Transition::evaluate`, animation `done` flag). A port must implement demand-driven frame scheduling, not fixed-rate ticks, or idle apps will burn CPU and settled animations may overrun.
 - **Wall-clock caution:** sampling uses read-time clocks (`Instant::now`, executor `now()`). Animation progress is a pure function of timestamps, but the timestamps themselves come from platform frame delivery — pacing guarantees stay with open question `q-frame-scheduling` (verify at runtime). No B2d finding asserts settled wall-clock behavior.
@@ -483,15 +549,21 @@ B2d-relevant notes only; other blocks pending.
 
 ## Security and Authorization
 
-Deferred to B2f with rationale: the framework is a library with no auth model (no users, sessions, or permissions). Credential storage (OS keychain via platform backends) is platform integration, covered under B2f supporting systems if its behavior proves contract-relevant. No auth contracts asserted in B2d.
+No framework account, session, or role model is specified. The reviewed APIs
+delegate clipboard access and credential storage to the host (C35–C36);
+the URL string is a lookup key, not an authorization decision.
 
 ## Configuration Model
 
-Pointer to `findings/config-model/config-model.md` (architecture phase) for sources/precedence. B2d additions: `reduce_motion` flag (App-level, setter refreshes all windows). Remaining env/feature-flag behavior belongs to B2f. Animation-relevant config is exhausted by the flag above.
+See `findings/config-model/config-model.md` for the architecture inventory.
+C38 records precedence and malformed-input behavior for the inspected backend
+settings. C6 covers the app-level reduce-motion flag. These are mechanism-specific
+controls, not one universal settings precedence rule.
 
 ## Doc/Test Conflicts
 
-None found in B2d scope. (Docs-vs-code comparison for animation: doc comments on `step`/`step_ramp`/`is_settled` match the implemented math; no test suite was executed — tests are read as contracts only where cited, none cited here beyond code-level doc examples.)
+The single-line text API documents a panic on newlines; the guard is debug-only
+(C28). Checked-in assertions were read where cited, not executed.
 
 ## Black-Box Acceptance List
 
@@ -508,7 +580,7 @@ Scenarios below are planned acceptance checks, not reported test runs.
 | B2d-7 | Undamped spring never settles | Zero-damping spring | Sample at any time | `is_active` remains true (settling time is infinite) |
 | B2d-8 | Infinite iterations never complete | Motion with `Iterations::Forever` | Sample at any time | Phase never `Completed` |
 | B2d-9 | Completed run reports final iteration | Finite motion, elapsed past total duration | Sample | Phase `Completed`, iteration equals final index |
-| B2d-10 | max_fps throttle | Animation with `max_fps = N` | Observe frame callbacks | At most N evaluations per second |
+| B2d-10 | Animation-driven timer throttle | Active animation with an ordinary positive finite cap and no external redraws | Inspect requests with a controlled clock | One pending timer per animation state at a time; its callback requests another update after the configured interval, not a global frame cap |
 | B2c-1 | Relative sizing | Child with `Relative(0.5)` width in a fixed-width parent | Lay out and read bounds | Child width equals half the parent width |
 | B2c-2 | Rem scaling | Same tree rendered under two `rem_size` roots | Compare absolute-positioned bounds | Bounds scale with the root rem size |
 | B2c-3 | Min-content default | Unconstrained leaf (e.g. text) with no definite size | Lay out with indefinite space | Leaf sizes to its min content, never to zero-or-unbounded |
@@ -539,6 +611,12 @@ Scenarios below are planned acceptance checks, not reported test runs.
 | B2e-4 | RTL cluster (C29) | A visible multi-byte RTL cluster with nonzero advance | Hit just inside each visual edge using the closest-caret query | Left maps to logical end, right to logical start; neither returns an interior byte |
 | B2e-5 | Explicit font precedence (C30) | Register two distinct fixture families A and B; adapter fallback starts with A; requested family unavailable | Resolve it first without and then with descriptor fallback B | First lookup returns A; second returns B |
 | B2e-6 | Raster error propagation (C31) | Controlled rasterizer returns an error for a known glyph on an atlas miss | Paint that glyph through the window glyph API | Call reports a failure; it does not claim a successful atlas insertion |
+| B2f-1 | Image fallback (C32) | Custom loader reports an error; fallback supplied | Lay out the image | Fallback appears rather than the loading view |
+| B2f-2 | Scroll after content shrinks (C33) | Existing negative offset lies outside the new extent | Remove content and lay out again | Offset stays inside the new range; it is zero if content now fits |
+| B2f-3 | Forced accessibility (C34) | Accessible window, no assistive client, visible accessible element | Enable forcing and draw | A fresh tree and node bounds are available; tree counter advances |
+| B2f-4 | Clipboard and credential capability (C35–C36) | Web backend | Call synchronous clipboard read and await credential read/write | Clipboard read is `None`; credential read reports no entry; credential write reports unsupported |
+| B2f-5 | Unsupported popup (C37) | X11 backend and a valid parent | Request an anchored platform popup | Typed unsupported error, not an implicit replacement window |
+| B2f-6 | Backend precedence (C38) | Build with both backends; both display variables nonempty | Evaluate compositor selection with and without `ZED_HEADLESS` present | Headless with the override, Wayland without it; this tests selection, not connection |
 
 ## Coverage and limits
 
@@ -548,43 +626,45 @@ Scenarios below are planned acceptance checks, not reported test runs.
 - Inspected scope (B2b): `Keystroke` identity rules + `InvalidKeystrokeError` (`platform/keystroke.rs`); binding precedence docs + `match_keystrokes` + null-disable scoping (`keymap.rs:140-200`, `binding.rs:89-117`); `dispatch_key` pending/match/replay + `flush_dispatch` + 1s timeout task (`key_dispatch.rs:480-560`, `window.rs:6357-6420`); `dispatch_keystroke` fallthrough chain + modality tracking (`window.rs:5829-5920`); focus model (`window.rs:550-640`, `2372-2400`); mouse phases + occlusion docs; gesture module docs + event types.
 - Inspected scope (B2e): document layout API and fixture assertions, caret query semantics,
   canonical font fallback, glyph dispatch, and atlas error propagation (C28–C31).
-- Skipped scope: supporting systems (B2f); full style/grid matrix; shaping engine internals,
+- Inspected scope (B2f): C32–C38, including controlled source and test paths for
+  loading, gestures, scroll, accessibility, platform I/O, popups, and configuration.
+- Skipped scope: full style/grid matrix; shaping engine internals,
   per-character fallback, rasterizer internals, and platform-dependent pixel comparison.
 - Evidence basis: source inspection, API docs, and checked-in test assertions. No runtime tests run.
 - Known blind spots: wall-clock pacing of frame timestamps (stays with `q-frame-scheduling`, needs runtime); exact `now` source in style-transition path (frame time vs read time — read as evaluate-time `now`, confirm in B2c/protocols if it matters); gesture/keyboard timing (B2b/B2e).
-- Coverage disposition: PARTIAL (B2d, B2c, B2a, B2b, and B2e recorded; B2f pending).
+- Secondary outputs: no additions needed to public surfaces, runtime lifecycle,
+  state and storage, or configuration model. Their architecture catalogs are
+  retained; the added observable contracts live here.
+- Coverage disposition: COMPLETE for the scheduled contracts blocks, not an
+  exhaustive API catalog or a runtime verification claim.
 
 ## Open Questions
 
-None new from B2d. Wall-clock pacing inherits the standing `q-frame-scheduling` (needs-runtime-test); no B2d finding asserts settled wall-clock behavior, so no new entry is required.
-
-| ID | Kind | Description | Deferred Reason |
-|---|---|---|---|
-| | | | |
+No new terminal questions registered. The existing headless parity, GPU
+fallback, and frame-pacing questions remain unresolved; no runtime closure
+is proposed by this phase.
 
 ## Carry-Forward
 
-None from B2d (no downstream phase is active yet for routing; mech-CF1 to protocols stands from the mechanical phase and is unaffected).
+The prior `mech-CF1` route to protocols remains unchanged.
 
 | ID | Target Phase | Description | Deferred Reason |
 |---|---|---|---|
-| | | | |
+| contracts-CF1 | protocols | Trace gesture claim/cancel/momentum transitions and the Wayland anchored-popup configure/dismiss lifecycle. | C33 and C37 establish surface observations, not event order or state-machine completeness. |
 
 ---
 
 ## Validation
 
-<!-- Phase incomplete: B2f pending. Validation runs at phase completion. -->
-
 | # | Criterion | Result | Evidence |
 |---|-----------|--------|----------|
-| 1 | User-facing surfaces are split by surface type. | PENDING | API/SDK surface identified; full surface split at completion. |
-| 2 | Feature contracts record trigger, defaults, outputs, side effects, persisted state, error behavior, and recovery behavior. | PENDING | B2d contracts complete per template fields; remaining blocks pending. |
-| 3 | Security and authorization model is documented (if applicable). | PENDING | Deferred to B2f with rationale; skip-or-document decided at completion. |
-| 4 | Contract ownership is mapped back to a layer or package. | PENDING | B2d ownership mapped; full map at completion. |
-| 5 | A black-box acceptance list is included. | PENDING | B2d scenarios B2d-1–B2d-10 recorded; full list at completion. |
-| 6 | Findings are marked with evidence levels. | PENDING | B2d claims tagged (all observed fact); phase-wide check at completion. |
-| 7 | Coverage and limits name inspected scope, skipped scope, evidence basis, and blind spots. | PENDING | B2d scope recorded; full section at completion. |
+| 1 | User-facing surfaces are split by surface type. | PASS | Surfaces Covered and Feature Contracts distinguish component and platform SDKs. |
+| 2 | Feature contracts record trigger, defaults, outputs, side effects, persisted state, error behavior, and recovery behavior. | PASS | C1–C38 cover the scheduled features; related fields are combined in supporting-service rows. |
+| 3 | Security and authorization model is documented (if applicable). | PASS | Security and Authorization; C35–C36 describe the inspected host services. |
+| 4 | Contract ownership is mapped back to a layer or package. | PASS | Owner and evidence fields in Feature Contracts. |
+| 5 | A black-box acceptance list is included. | PASS | Black-Box Acceptance List covers all six blocks; scenarios are not test results. |
+| 6 | Findings are marked with evidence levels. | PASS | Evidence fields distinguish source assertions and inference; runtime questions remain open. |
+| 7 | Coverage and limits name inspected scope, skipped scope, evidence basis, and blind spots. | PASS | Coverage and limits and the explicit protocol handoff. |
 
-**Validated by:** — (pending phase completion)
-**Overall:** PENDING
+**Validated by:** 2026-11-23 (contracts phase)
+**Overall:** PASS

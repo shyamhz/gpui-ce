@@ -1,7 +1,7 @@
 project_name: gpui-ce
 pipeline: workflow/pipeline-full-with-deep-audit.yaml
-current_phase: contracts
-last_updated: "2026-11-22T14:35:06.055Z"
+current_phase: protocols
+last_updated: "2026-11-23T13:26:35.845Z"
 schema_version: 1
 phases:
   architecture:
@@ -52,11 +52,24 @@ phases:
         deferred_reason: "Frame-lifecycle state machine is the protocols phase's rubric; the mechanical pass cannot responsibly close the invariant question."
         target_phase: protocols
   contracts:
-    status: pending
-    owner_notes: []
-    outputs_present: []
+    status: complete
+    owner_notes:
+      - "Completed via codecarto_complete."
+      - "Primary output: .codecarto/findings/contracts/behavioral-contracts.md"
+      - "Validation: PASS"
+      - "Completed B2d, B2c, B2a, B2b, B2e, and B2f with source-backed contracts and planned acceptance scenarios."
+      - "Supporting services distinguish documented GPUI behavior from host capability and permission outcomes."
+      - "No runtime tests were run; existing runtime questions and mech-CF1 remain open."
+    outputs_present:
+      - findings/contracts/behavioral-contracts.md
     open_questions: []
-    carry_forward: []
+    carry_forward:
+      -
+        id: contracts-CF1
+        kind: defer-to-phase
+        description: "Trace gesture claim/cancel/momentum transitions and the Wayland anchored-popup configure/dismiss lifecycle."
+        deferred_reason: "C33 and C37 establish surface observations, not event order or state-machine completeness."
+        target_phase: protocols
   protocols:
     status: pending
     owner_notes: []
@@ -82,7 +95,7 @@ phases:
     open_questions: []
     carry_forward: []
 next_actions:
-  - "Begin contracts phase by producing findings/contracts/behavioral-contracts.md"
+  - "Begin protocols phase by producing findings/protocols/protocols-and-state.md"
 post_pipeline:
   -
     id: post-frame-capture
