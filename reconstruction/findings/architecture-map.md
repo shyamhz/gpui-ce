@@ -62,10 +62,10 @@ in the workspace (only external crates). `gpui_ce_zed_util` sits one step up (de
 
 **`gpui` (core) depends only on leaves + `gpui_macros`** (`observed fact`: `crates/gpui/Cargo.toml`
 `[dependencies]` lists `gpui_macros`, `gpui_shared_string`, workspace leaves; no
-`gpui_platform`/`gpui_render`/backend crates in normal deps). Everything platform- or GPU-specific
-lives *outside* core behind traits core defines: `Platform`, `PlatformWindow`, `PlatformDisplay`,
-`PlatformTextSystem`, `PlatformKeyboardLayout/Mapper`, `PlatformInputHandler` (`observed fact`:
-`crates/gpui/src/platform.rs:151-411` trait method list).
+`gpui_platform`/`gpui_render`/backend crates in normal deps). Platform and
+GPU adapters use interfaces defined in core, including separate `Platform`,
+`PlatformDisplay`, `PlatformWindow` and `PlatformTextSystem` traits
+(`observed fact`: `crates/gpui/src/platform.rs:151,389,891,1206`).
 
 The next ring — `gpui_platform`, `gpui_macos`, `gpui_apple`, `gpui_linux`, `gpui_windows`,
 `gpui_web`, `gpui_render`, `gpui_wgpu`, `gpui_ce_parley`, `gpui_elements`, `gpui_media`,
@@ -118,10 +118,14 @@ output). Summary of load-bearing surfaces:
   graph (`observed fact`: `executor.rs:68-129,359-390`, `app.rs:1314`, `app.rs:1430`,
   `context.rs:146-256,416,1145`).
 
-- **Platform trait surface (~90 methods).** Window management, run loop, menus, clipboard (incl.
-  async + primary/find pasteboards), credentials/keychain, file prompts, URL schemes, notifications,
-  thermal state, haptics, keyboard layout, screen capture (gated), app identity/restart — all behind
-  `dyn Platform` so backends are swappable (`observed fact`: `platform.rs:151-411`).
+- **Platform trait surface (74 declarations).** This source count includes
+  default bodies and target-gated methods, but not sibling traits. Window
+  management, run loop, menus, clipboard (incl. async + primary/find
+  pasteboards), credentials/keychain, file prompts, URL schemes,
+  notifications, thermal state, haptics, keyboard layout, screen capture
+  capability and app identity/restart are behind `dyn Platform`
+  (`observed fact`: `crates/gpui/src/platform.rs:151-386`; `PlatformDisplay`
+  begins at line 389).
 
 - **GPU scene API.**
   `Window::paint_quad/paint_path/paint_image/paint_drop_shadows/paint_backdrop_filter/paint_layer…`,
@@ -187,20 +191,29 @@ Step-by-step trace with phase detail lives in `findings/runtime-lifecycle/runtim
 
 ## Concurrency Model
 
-- **Single-threaded core, enforced.** `Application(Rc<AppCell>)`, `AppCell { app: RefCell<App> }`,
-  and `this: Weak<AppCell>` form a main-thread-only ownership graph (`observed fact`:
-  `app.rs:85-87,186,836`). `Rc`/`RefCell` are *not* thread-safe by construction — in
-  language-independent terms: all UI state lives on one thread and shared access panics (Rust
-  `borrow_mut` panics on re-entrant borrows) rather than locking. Cross-thread handles are explicit:
-  `WeakEntity`/`AnyView`, `AsyncApp`/`AsyncWindowContext` snapshots, and channel-based `update()`
-  hops back to the main thread (`strong inference`: `entity_map.rs` `Weak` usage + `app.rs:204`
-  `ApplicationHandle::update`).
+- **Single-threaded core, enforced.** `ApplicationHandle::update` synchronously
+  borrows its `Rc<AppCell>` and enters the app update; it does not send a
+  message. `AsyncApp` holds a weak reference to the same app, upgrades and
+  borrows it on update, and can be retained across await points.
+  `AsyncWindowContext` wraps it. Neither is a worker-thread proxy, and
+  re-entrant mutable borrowing is rejected. The platform scheduler hands
+  foreground runnables to the main-thread dispatcher separately
+  (`observed fact`: `crates/gpui/src/app.rs:186-215`,
+  `crates/gpui/src/app/async_context.rs:57-69,238-250,448-452`,
+  `crates/gpui/src/platform_scheduler.rs:109-122`).
 
-- **Two executors, one scheduler.** `gpui_scheduler` implements both: `BackgroundExecutor` runs
-  `Send` futures on a worker pool; `ForegroundExecutor` runs non-`Send` futures on the main thread,
-  pumped by the platform run loop. `Task<T>` is the join handle (`.detach()` to abandon). Priorities
-  (`Priority`) flow through a 3-lane (high/medium/low) queue with a condvar (`observed fact`:
-  `executor.rs:72-385`, `queue.rs:8-40`, `threaded_dispatcher.rs:1-50`).
+- **Two executors, one scheduler interface.** `async-task` builds task
+  handles and runnables; the platform dispatcher places foreground work on
+  the UI thread and background `Send` work according to its own policy.
+  The Linux background pool creates OS worker threads that consume queued
+  runnables. Its weighted queue has high, medium and low lanes; this is not
+  a universal dispatcher implementation. A dedicated session is a separate
+  path, starting a fresh OS thread or a supported Wasm worker
+  (`observed fact`: `crates/gpui_scheduler/src/executor.rs:229-251`,
+  `crates/gpui/src/platform_scheduler.rs:109-122`,
+  `crates/gpui_linux/src/linux/dispatcher.rs:30-52`,
+  `crates/gpui/src/queue.rs:69-77`,
+  `crates/gpui_scheduler/src/scheduler.rs:163-208`; protocols S8).
 
 - **Threading matrix.** Production dispatchers are per-platform (`LinuxDispatcher`, macOS
   dispatch/GCD, Windows, web). `spawn_dedicated` spawns real OS threads — **on wasm it panics at
@@ -227,8 +240,10 @@ Step-by-step trace with phase detail lives in `findings/runtime-lifecycle/runtim
 
 Detail lives in `findings/build-and-deploy/build-and-deploy.md` (secondary output). Essentials:
 
-- **Cargo workspace**, resolver v3, edition 2024, **MSRV 1.95.0** (uses `Vec::push_mut`; enforced by
-  `msrv-check` in CI) (`observed fact`: root `Cargo.toml:29,95`, `justfile: msrv`, `ci.yml: msrv`).
+- **Cargo workspace**, resolver v3, workspace edition 2024. `gpui-ce` declares
+  Rust 1.95 for `Vec::push_mut`; the workspace MSRV check uses 1.95.0
+  (`observed fact`: root `Cargo.toml:29-33`, `crates/gpui/Cargo.toml:14`,
+  `justfile:9,164-168`, `.github/workflows/ci.yml:132-148`).
 
 - **Codegen at build time.** `gpui_render`'s build script compiles Rust-authored shader modules
   (`wgsl-rs`) to WGSL via `naga` and `include!`s them from `OUT_DIR` (`observed fact`:

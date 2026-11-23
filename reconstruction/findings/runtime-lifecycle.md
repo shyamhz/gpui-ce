@@ -65,13 +65,15 @@ Insert `WindowId` → `Window::new(handle, options, cx)` (creates `PlatformWindo
 
 ### Event dispatch (`Window::dispatch_event`, `window.rs:5871`; `handle_input`, `:5643`)
 
-OS event → `PlatformInput` (17 variants: keys, modifiers, mouse ×5, pressure, scroll, pinch,
-long-press, touch-drag, file-drop, touch — `interactive.rs:771-800`) → `dispatch_event` →
-bounds-tree hit test → element mouse handlers / focus dispatch; keystrokes → focus-id + key-context
-resolution (`key_dispatch.rs` dispatch tree, `set_key_context/set_focus_id/set_view_id`, node reuse
-via `reuse_subtree`) → `Keymap` lookup → typed `Action` → `on_action` handlers (bubbling controlled
-by `propagate_event`, `app.rs:900`). `DispatchEventResult` returned to the platform (handled vs
-ignored).
+OS event → `PlatformInput` → `dispatch_event` → hit testing/handlers or focus
+and key-context dispatch. The enum has 14 variants: key down/up, modifiers
+changed, mouse down/up/pressure/move/exit, scroll wheel, pinch, long press,
+touch drag, file drop and raw touch (`crates/gpui/src/interactive.rs:771-800`;
+protocols Event Catalog). `ClickEvent` is separate.
+
+Keystroke dispatch can resolve a typed `Action` via the focus/key-context
+tree and keymap. The synchronous `DispatchEventResult` reports propagation
+and default prevention (`crates/gpui/src/window.rs:5871-6010,6347-6455`).
 
 ### In-frame scheduling
 

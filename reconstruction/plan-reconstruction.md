@@ -25,11 +25,11 @@ requirement/choice/unresolved classification standard and UNRESOLVED accounting;
 
 **Corrections verified against report + source:** PlatformInput = 14 variants
 (`interactive.rs:771-800`); Platform trait = 74 methods (`platform.rs:151-386`, remainder belong to
-`PlatformDisplay` et al.); `ApplicationHandle::update` is a main-thread `Rc` borrow, cross-thread
-path is `AsyncApp` (`app.rs:204-215`); executor pool spawns plain OS threads (`scheduler.rs:200`,
-`wasm_thread` on wasm). The findings files themselves were intentionally left unedited per planning
-boundaries, so the corrections live in the verification report until a consolidation step folds them
-in.
+`PlatformDisplay` et al.); `ApplicationHandle::update` and `AsyncApp::update`
+borrow app state on the same thread; the dispatcher routes runnables.
+On Linux the dispatcher creates the worker pool; the scheduler's dedicated
+thread path is separate. The corrections were initially held in the
+verification report and were folded into the affected findings in B7b.
 
 ## 2. Pipelines evaluated
 

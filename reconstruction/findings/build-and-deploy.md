@@ -8,10 +8,10 @@ the recipe/job-level detail. (`observed fact` unless noted.)
 
 ### Toolchain
 
-- Cargo workspace, `resolver = "3"`, `edition = "2024"`, `rust-version = "1.95"` workspace-wide;
-  MSRV pinned as `msrv := "1.95.0"` in `justfile` and enforced by the `msrv` CI job (bump to 1.95
-  was needed for `Vec::push_mut`, `CHANGELOG #247`). Default workspace member: `crates/gpui` only
-  (`Cargo.toml:29`).
+- Root `Cargo.toml:29-33` sets resolver 3, workspace edition 2024 and the
+  default member `crates/gpui`. The `rust-version = "1.95"` declaration
+  is in `crates/gpui/Cargo.toml:14`, not the root manifest. The workspace
+  MSRV recipe uses 1.95.0 (`justfile:9,164-168`, `.github/workflows/ci.yml:132-148`).
 
 - Clippy workspace lints deny `dbg_macro`, `todo`, `declare_interior_mutable_const`,
   `redundant_clone`, `disallowed_methods` (`Cargo.toml:326-341` + `clippy.toml`); `typos.toml`,

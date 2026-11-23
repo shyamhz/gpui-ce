@@ -44,7 +44,11 @@ enumerated detail. (`observed fact` unless noted; paths relative to repo root.)
   `request_animation_frame/on_next_frame`, `Hitbox`/`HitTest` inspection
   (`window.rs:2682-2712,4439-4774,2807`).
 
-### Platform trait (`dyn Platform`, `crates/gpui/src/platform.rs:151-411`)
+### Platform trait (`dyn Platform`, `crates/gpui/src/platform.rs:151-386`)
+
+The trait declares 74 methods in source, including default bodies and
+target-gated declarations. `PlatformDisplay` and other sibling traits are
+separate and excluded from the count.
 
 Window/run-loop/appearance control; displays; menus (`app_menu.rs`, dock menu); clipboard (sync +
 async + primary + find pasteboard); credentials vault (read/write/delete → keychain/oo7); file/dir
