@@ -1,7 +1,7 @@
 project_name: gpui-ce
 pipeline: workflow/pipeline-full-with-deep-audit.yaml
-current_phase: defect-scan-semantic
-last_updated: "2026-11-23T13:57:18.470Z"
+current_phase: porting
+last_updated: "2026-11-23T14:18:00.774Z"
 schema_version: 1
 phases:
   architecture:
@@ -73,9 +73,16 @@ phases:
     open_questions: []
     carry_forward: []
   defect-scan-semantic:
-    status: pending
-    owner_notes: []
-    outputs_present: []
+    status: complete
+    owner_notes:
+      - "Completed via codecarto_complete."
+      - "Primary output: .codecarto/findings/defect-scan-semantic/semantic-defects.md"
+      - "Validation: PASS"
+      - "Completed B4a–B4c: six findings across passes 3–5 (two medium, four low)."
+      - "Use protocols S4 and finding 5.1 to qualify C27 raw-touch delivery; use protocols S9 to qualify C28 clamp behavior."
+      - "No runtime tests run. No carry-forwards were routed to this phase, and the three inherited runtime questions remain open."
+    outputs_present:
+      - findings/defect-scan-semantic/semantic-defects.md
     open_questions: []
     carry_forward: []
   porting:
@@ -91,7 +98,7 @@ phases:
     open_questions: []
     carry_forward: []
 next_actions:
-  - "Begin defect-scan-semantic phase by producing findings/defect-scan-semantic/semantic-defects.md"
+  - "Begin porting phase by producing findings/porting/reverse-engineering-bundle.md"
 post_pipeline:
   -
     id: post-frame-capture

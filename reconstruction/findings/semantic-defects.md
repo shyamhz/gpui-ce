@@ -5,12 +5,12 @@
 - **Source:** repository root; source references below are relative to it.
 - **Architecture:** `findings/architecture/architecture-map.md`, Concurrency Model.
 - **Contracts:** `findings/contracts/behavioral-contracts.md`, notably C20,
-  C35–C36 and Security and Authorization.
+  C27–C28, C35–C36 and Security and Authorization.
 - **Protocols:** `findings/protocols/protocols-and-state.md`, S3 and S6–S8.
 - **Mechanical baseline:** `findings/defect-scan-mechanical/mechanical-defects.md`.
 - **Pipeline:** `workflow/pipeline-full-with-deep-audit.yaml`.
 - **Date:** 2026-11-23.
-- **Scope:** B4a–B4b / passes 3 and 4. Pass 5 is pending.
+- **Scope:** B4a–B4c / passes 3, 4 and 5.
 
 ## Pass 3: Concurrency and Resource Management
 
@@ -113,11 +113,35 @@ secret leaves the adapter.
 
 ## Pass 5: API Contract Violations
 
-Pending B4c.
+| # | Location | Defect | Severity | Evidence Level | Action | Spec reference |
+|---|---|---|---|---|---|---|
+| 5.1 | `crates/gpui/src/gestures.rs:479-489,751-765`; `crates/gpui/src/window.rs:6127-6140`; `crates/gpui/src/elements/div.rs:3883-3897` | Raw-touch tap recognition dispatches synthetic mouse down/up. The ordinary `Div` click path constructs `ClickEvent::Mouse` when its click guards pass, not the documented `ClickEvent::Touch`. The traced recognizer also does not recognize pinch from raw contacts. | Medium | observed fact | port differently | C27; `crates/gpui/src/gestures.rs:3-11`; protocols S4 records the implemented touch path. |
+| 5.2 | `crates/gpui/src/text_system/window_text_system.rs:37-56` | `shape_line` documents an unconditional panic for newlines, but its explicit newline check is a debug assertion. The wrapper does not enforce that promise in builds with debug assertions disabled. | Low | observed fact | port differently | C28 and public `shape_line` documentation at `window_text_system.rs:37-42`. |
+| 5.3 | `crates/gpui/src/app.rs:1750-1760`; `crates/gpui/src/platform.rs:339-348`; `crates/gpui_windows/src/platform.rs:829-831`; `crates/gpui_windows/src/clipboard.rs:92-94` | The public awaitable clipboard read says read failures resolve to errors. The default adapter implementation wraps the synchronous `Option` in `Ok`; the Windows reader's clipboard-open failure becomes `Ok(None)` via this path, not a typed error. | Low | observed fact | port differently | C35 and public `App::read_from_clipboard_async` documentation at `app.rs:1750-1755`. |
+
+- **5.1:** Preserve synthesized pointer compatibility, including the existing
+  dispatch guards, when reproducing the current raw-touch path. Distinguish
+  the public touch-click variant from what this route emits, and do not
+  infer raw-touch pinch recognition from the separate `PlatformInput::Pinch`
+  carrier (`crates/gpui/src/interactive.rs:771-800`).
+- **5.2:** Specify the single-line precondition and choose consistent
+  validation independently of build mode. This is not a claim that
+  multiline input succeeds in optimized builds: subsequent shaping is
+  outside the assertion comparison.
+- **5.3:** Model success-with-no-item and host-read failure separately where
+  the backend can distinguish them, or document the lossy fallback. The
+  finding concerns the adapter's return mapping, not conditions under which
+  the Windows API fails or web permissions are granted.
+
+**Cross-check not counted twice:** protocols S9 already qualifies C28's
+clamp wording. GPUI's Parley adapter reduces the soft-break budget across
+paragraphs, without suppressing hard paragraph breaks. This is a clarification
+to the reconstruction contract, not evidence of an unconditional document
+row cap being violated (`crates/gpui_ce_parley/src/text_system.rs:1634,1712-1721,2059-2076`).
 
 ## Summary
 
-Counts cover executed passes only.
+Counts cover all three semantic passes.
 
 ### Findings by Severity
 
@@ -125,9 +149,9 @@ Counts cover executed passes only.
 |---|---:|
 | Critical | 0 |
 | High | 0 |
-| Medium | 1 |
-| Low | 2 |
-| **Total** | **3** |
+| Medium | 2 |
+| Low | 4 |
+| **Total** | **6** |
 
 ### Findings by Pass
 
@@ -135,20 +159,26 @@ Counts cover executed passes only.
 |---|---:|---:|---:|---:|---:|
 | 3. Concurrency and resources | 0 | 0 | 1 | 0 | 1 |
 | 4. Security and trust | 0 | 0 | 0 | 2 | 2 |
-| 5. API contract violations | — | — | — | — | Pending |
+| 5. API contract violations | 0 | 0 | 1 | 2 | 3 |
 
 ### Top Findings
 
 1. Pass 3, `crates/gpui/src/queue.rs:80-92,156-161`: shared queue
    closure does not wake idle workers. Medium; port differently.
-2. Pass 4, `crates/gpui_windows/src/platform.rs:833-842`: size rejection
+2. Pass 5, `crates/gpui/src/window.rs:6134-6140`: recognized taps enter
+   mouse dispatch rather than producing the documented touch-click variant.
+   Medium; port differently.
+3. Pass 4, `crates/gpui_windows/src/platform.rs:833-842`: size rejection
    echoes the credential lookup key. Low; port differently.
-3. Pass 4, `crates/gpui_linux/src/linux/platform.rs:679-704`: ordinary
+4. Pass 4, `crates/gpui_linux/src/linux/platform.rs:679-704`: ordinary
    output bytes lose store-side zeroization. Low; port differently.
 
 ### Carry-Forward Closure
 
-None routed to this phase at entry. B4a–B4b do not close runtime questions.
+None routed to this phase at entry. The mechanical carry-forward `mech-CF1`
+was closed in protocols, where S3 records the frame-range invariant
+without claiming a reachable defect. `contracts-CF1` also closed there.
+Neither is reopened here.
 
 ## Runtime probes
 
@@ -156,7 +186,7 @@ None run. The queue disposition is based on the receive and sender-drop paths.
 
 ## Open Questions
 
-No new framework questions from B4a–B4b. The inherited questions on headless
+No new framework questions. The inherited questions on headless
 pixel parity, GPU-less behavior, and delivered frame pacing still need
 runtime evidence; this pass does not propose an answer to any of them.
 
@@ -168,18 +198,34 @@ runtime evidence; this pass does not propose an answer to any of them.
 - **Inspected scope (B4b):** credential lookup inputs, host delegation,
   diagnostics and secret output ownership; clipboard ownership, format
   handling, metadata provenance and web permission handoff.
+- **Inspected scope (B4c):** raw touch through window/element dispatch,
+  single-line shaping guards, paragraph clamp qualification, and the
+  default async clipboard return mapping through the Windows reader.
 - **Skipped scope:** full adapter shutdown matrix, native and driver
   allocation internals, lock-order proof across dependencies, dependency
   vulnerability scanning, host authorization tests, downstream clipboard
-  consumers, and B4c.
+  consumers, and exhaustive contract testing across platforms.
 - **Evidence basis:** source inspection and upstream findings.
 - **Known blind spots:** worker lifetime in a live host, driver-side
   reclamation, quantitative effects of repeated dispatcher teardown, and
   native store/browser policy outcomes.
-- **Coverage disposition:** PARTIAL — B4a and B4b only.
+- **Coverage disposition:** COMPLETE for the planned, source-based semantic
+  passes; not exhaustive across host APIs.
 
 ## Validation
 
-Phase validation pending B4c. B4a cites both sides of the queue lifecycle.
-B4b cites the clipboard and credential contracts and distinguishes host policy
-from source evidence. Summary counts match the executed passes.
+| # | Criterion | Result | Evidence |
+|---|---|---|---|
+| 1 | All three passes documented | PASS | Passes 3, 4 and 5 contain findings. |
+| 2 | Location, severity, evidence level and action present | PASS | All numbered rows include these fields. |
+| 3 | Pass 5 cites the diverging contract | PASS | C27, C28 and C35 plus public source docs. |
+| 4 | Organized by pass and severity; totals reconcile | PASS | Six findings: two medium and four low. |
+| 5 | Carry-forwards addressed | PASS | None targeted this phase; previous closures accounted for. |
+| 6 | Evidence levels present | PASS | Source observations distinguished from queue-lifecycle inference. |
+| 7 | Unsettled findings correctly routed | PASS | No new external-behavior or open-question findings; three inherited questions remain unresolved. |
+| 8 | Quantitative specifics supported | PASS | No uncited numeric limits asserted; severity totals follow the rows. |
+| 9 | Coverage and limits stated | PASS | Inspected and skipped scope, evidence basis, and blind spots documented. |
+
+**Validated by:** 2026-11-23 (semantic defects phase)
+
+**Overall:** PASS
