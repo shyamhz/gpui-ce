@@ -24,6 +24,7 @@ jobs:
   orchestrate:
     runs-on: ubuntu-latest
     outputs:
+      run_checks: ${{ steps.filter.outputs.run_checks }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
       run_style: ${{ steps.filter.outputs.run_style }}
     steps:
@@ -31,14 +32,41 @@ jobs:
         with:
           fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
       - id: filter
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           if [ -z "$GITHUB_BASE_REF" ]; then
-            COMPARE_REV="$(git rev-parse HEAD~1)"
+            # Compare the whole push, not just its final commit.
+            COMPARE_REV="$PUSH_BEFORE"
+            if [[ -n "$COMPARE_REV" && ! "$COMPARE_REV" =~ ^0+$ ]] &&
+               ! git cat-file -e "${COMPARE_REV}^{commit}" 2>/dev/null; then
+              git fetch --no-tags --depth=1 origin "$COMPARE_REV" || true
+            fi
           else
             git fetch --update-head-ok origin "$GITHUB_BASE_REF" --depth=350 || true
-            COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
+            COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD || true)"
           fi
-          CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
+
+          if [[ -z "$COMPARE_REV" ]] || ! git cat-file -e "${COMPARE_REV}^{commit}" 2>/dev/null; then
+            # Without a trustworthy base, don't skip any project checks.
+            echo "run_checks=true" >> "$GITHUB_OUTPUT"
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
+            echo "run_style=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Reconstruction is published separately, including its Rust probe.
+          # Treat moves into it as project deletions plus mirror additions.
+          CHANGED_FILES="$(git diff --name-only --no-renames "$COMPARE_REV" "$GITHUB_SHA" -- . \
+            ':(exclude)reconstruction/**' \
+            ':(exclude).github/workflows/reconstruction-mirror.yml')"
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo "run_checks=false" >> "$GITHUB_OUTPUT"
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
+            echo "run_style=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "run_checks=true" >> "$GITHUB_OUTPUT"
 
           check_pattern() {
             local name="$1" pattern="$2" invert="${3:-false}"
@@ -88,6 +116,8 @@ jobs:
   # Spell check
   typos:
     runs-on: ubuntu-latest
+    needs: [orchestrate]
+    if: needs.orchestrate.outputs.run_checks == 'true'
     steps:
       - uses: actions/checkout@v5
       - uses: crate-ci/typos@v1.47.2
@@ -98,6 +128,8 @@ jobs:
   # from upstream releases and should be reviewed, not block unrelated work.
   lockfile:
     runs-on: ubuntu-latest
+    needs: [orchestrate]
+    if: needs.orchestrate.outputs.run_checks == 'true'
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
