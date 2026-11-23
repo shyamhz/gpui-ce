@@ -1,7 +1,7 @@
 # Protocols and State
 
-**Blocks B3a–B3b — event catalog and state machines.** B3c–B3d and phase
-validation are pending.
+**Blocks B3a–B3c — events, state machines, rendering and scheduling.**
+B3d and phase validation are pending.
 Code locations below are relative to the repository root.
 
 
@@ -235,6 +235,98 @@ adapters' unsupported result.
   These are callback reactions, not an assertion of compositor event timing.
 
 
+### S6. Scene construction, compilation, and presentation
+
+**Observed fact.** The render boundary carries a finished scene and a
+backend-neutral command sequence whose ranges index that scene's primitive
+arrays. It is not a serialized graphics protocol.
+
+1. **Record.** The scene receives paint primitives with geometry and a mask.
+   Insert intersects the bounds with the mask and skips empty non-boundary
+   primitives. It retains filter markers to keep pairing intact. Order is
+   assigned through the bounds-ordering structure or the active layer.
+   Frame-cache replay reinserts paint operations through the same scene API;
+   it does not replay an old GPU command buffer. See S3 and
+   `crates/gpui/src/scene.rs:136-177,242-250`.
+
+2. **Compile.** `Scene::finish` sorts the typed arrays and compiles the plan.
+   The batch iterator merges live primitive streams by order and kind,
+   preserving filter markers as boundaries; compatible instances are grouped
+   with their ranges, atlas IDs or pipeline variants as applicable. The
+   plan matches filter markers with a stack, allocates isolated target indices
+   by nesting depth, and emits begin/end commands plus ordinary batches.
+   An unmatched opening marker uses the inline target. An orphan closing
+   marker triggers a debug assertion; the non-asserting path emits an inline
+   end command. Requirements include path geometry counts and intermediate
+   target needs. See `crates/gpui/src/scene.rs:252-313,509-650` and
+   `crates/gpui/src/scene/plan.rs:34-163,237-290`.
+
+3. **Consume.** `Window::present` passes `rendered_frame.scene` to the
+   platform draw method. Metal, DirectX, and wgpu read shared plan
+   requirements; the wgpu encoder turns commands into draws after preparing
+   targets and capacity. Paths can require intermediate rasterization;
+   layer and filter ordering may not be discarded by a port's batching.
+   See `crates/gpui/src/window.rs:3395-3411`,
+   `crates/gpui_apple/src/metal_renderer.rs:581`,
+   `crates/gpui_windows/src/directx_renderer.rs:491`, and
+   `crates/gpui_wgpu/src/wgpu_renderer/frame.rs:16-42,244-289,457`.
+
+4. **Submit / present (wgpu trace).** An unconfigured target returns false.
+   On surface acquisition, suboptimal/lost/outdated branches reconfigure;
+   timeout/occlusion request a redraw; validation records a fault and also
+   requests redraw. Successful encoding submits to the queue, then the
+   successful draw path calls `present`; if encoding fails after acquisition,
+   it drops the view/frame and reconfigures. These are adapter reactions,
+   not measured recovery or display completion. See
+   `crates/gpui_wgpu/src/wgpu_renderer/platform.rs:124-172` and
+   `crates/gpui_wgpu/src/wgpu_renderer/frame.rs:16-42`.
+
+**Portability hazard.** A plan's ranges are meaningful only with the finished
+scene that produced them. The debug checks do not make them portable handles.
+`request_animation_frame`, renderer submission, and pixels actually appearing
+on a display are different observations.
+
+### S7. Window frame demand and callback drain
+
+**Observed fact.** `crates/gpui/src/window.rs:1758-1897,2682-2713`;
+see animation contracts C3/C5 and frame publication S1.
+
+| Trigger / guard | Core behavior |
+|---|---|
+| Register a next-frame callback | Append it, call platform `schedule_frame`, and wake the platform source; registration need not immediately dirty the window. |
+| Request an animation frame | Register a callback that notifies the captured current view. |
+| Frame request while another draw is on the same thread's stack | Return without a nested draw; accumulate its forced-render bit for a later request. |
+| Eligible request hits the interval throttle | Preserve forced-render demand; schedule/wake to retry, without draining callbacks in this turn. Presentation-required requests bypass the throttle. |
+| Request accepted | Take the queued callback snapshot and invoke it in order before deciding whether to redraw. Callbacks appended while this snapshot runs stay queued. |
+| Dirty or forced render | Draw and present; forcing refresh bypasses cached view reuse in this path. |
+| Not dirty; presentation is needed | Present the existing rendered scene without rebuilding it. Dirty work or remaining callbacks cause renewed scheduling/wake requests. |
+
+The interval policy is conditional, not a universal FPS guarantee. Scheduler
+and backend source signals do not settle `q-frame-scheduling`.
+
+### S8. Task scheduling, ordering, and lifetime
+
+**Observed fact.** `crates/gpui/src/platform_scheduler.rs:109-170`,
+`crates/gpui/src/queue.rs:69-77,315-357`,
+`crates/gpui_scheduler/src/scheduler.rs:25-46,135-211`, and
+`crates/gpui_scheduler/src/executor.rs:221-253,380-403,554-563`.
+
+| Boundary / operation | Carrier and guarantee |
+|---|---|
+| Foreground scheduling | `PlatformScheduler` hands a runnable to the main-thread dispatcher with default priority. This is thread placement, not synchronous execution at the call site. |
+| Background scheduling | Spawning schedules a runnable; subsequent scheduling uses the requested priority through the dispatcher while the scheduler is alive. No cross-backend completion order is specified. |
+| Shared weighted queue when the adapter uses it | Enqueue at the back of each priority lane. Select a lane probabilistically from nonempty lanes, then pop its front. This gives FIFO **dequeue** within one lane, not strict priority across lanes, or FIFO completion across workers / task polls. Realtime audio is not accepted by this queue. |
+| Timer | The platform delayed-dispatch path runs a runnable which sends a one-shot completion signal. A requested delay is not an observed wake deadline. |
+| Task handle | Await obtains output; documented cancellation on drop and detach-without-output are distinct. No rollback of already executed side effects is implied. |
+| Dedicated session | Spawn a thread (worker for the supported Wasm build), return an asynchronous handle rendezvous, and run session-local runnables on that thread. The loop exits when runnable senders are gone; detached children may keep it alive after the root finishes. Cancelling the root is not a session-wide join. |
+
+**Portability hazard.** The shared priority queue does not define all
+dispatchers' policy. Its users include the Linux background dispatcher and
+the Windows main queue (`crates/gpui_linux/src/linux/dispatcher.rs:32-38`,
+`crates/gpui_windows/src/platform.rs:130`). Keep affinity, readiness, dequeue
+and completion separate when specifying ordering.
+
+
 ## Persistent Schema Notes
 
 Pending. The event envelopes cataloged here are in-memory values; that does not
@@ -258,13 +350,16 @@ establish the absence of other persisted formats.
 - **Inspected (B3b):** window registry lifetime, redraw publication, focus and
   effect flushing, element/frame reuse, touch claims and momentum, and Wayland
   popup event handling.
-- **Skipped:** exhaustive per-adapter event conversion, IME sequencing, full
-  renderer/executor flows, frame scheduling/recovery, and persisted schemas.
+- **Inspected (B3c):** record/replay and render-plan compilation; wgpu
+  acquire/submit/present; frame demand and callback drain; executor handoff,
+  priority queue selection, timers and dedicated sessions.
+- **Skipped:** exhaustive per-adapter event conversion and IME sequencing,
+  complete GPU recovery and renderer parity, and persisted schemas.
 - **Evidence basis:** source inspection, with completed architecture and
   contracts outputs for context. No runtime tests or traces were run.
 - **Known blind spots:** observed pacing, platform-specific emission, and
   exhaustive frame-cache invalidation across all producers and rollback paths.
-- **Coverage disposition:** PARTIAL — B3a and B3b recorded.
+- **Coverage disposition:** PARTIAL — B3a through B3c recorded; B3d pending.
 
 
 ## Open Questions
@@ -282,6 +377,7 @@ questions. Framework carry-forward closure awaits the protocols phase handoff.
 
 ## Validation
 
-Phase validation pending B3c–B3d. B3a checked all 14 input variants against
+Phase validation pending B3d. B3a checked all 14 input variants against
 source. B3b recorded guarded transitions and distinguished frame publication,
-effect draining, and native configuration acknowledgements.
+effect draining, and native configuration acknowledgements. B3c traced the
+render-plan and scheduling paths without asserting measured timing.
