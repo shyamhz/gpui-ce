@@ -1,8 +1,14 @@
 # GPUI-CE Reconstruction Workspace
 
-Human-readable, committable record of the GPUI-CE reverse-engineering project.
-The machine workspace lives in `.codecarto/` (framework-owned state, phase
-gates, handoffs); this folder is the record a person reviews and git tracks.
+Human-readable record of the GPUI-CE reverse-engineering project.
+[GPUI-CE's `reconstruction/` directory](https://github.com/shyamhz/gpui-ce/tree/main/reconstruction)
+is the source of truth. If you're reading this in the standalone mirror,
+submit changes to GPUI-CE, not to the mirror.
+
+The mirror contains the guides, specification, and verification records.
+Source citations are relative to the GPUI-CE checkout, and the
+[Linux probes](verification/runtime-spikes.md#reproduction) are run there.
+The `.codecarto/` workspace and GPUI source are not part of the mirror.
 
 ## Reimplementation guides
 
@@ -45,3 +51,22 @@ for what was checked, what failed, and what remains unresolved.
   folder at each block exit. Machine-local paths (`scratch/`, `dashboard.html`,
   usage logs, `broadside/` runs) are intentionally never committed — see
   `.codecarto/.gitignore`.
+
+## Mirror setup for maintainers
+
+1. Create an **empty** GitHub repository for the mirror. Do not initialize it
+   with a README, license, or `.gitignore`. Review the reconstruction history
+   and choose the visibility before publishing.
+2. Create a fine-grained GitHub token with access to **only the destination
+   repo** and **Contents: Read and write**. Store it in GPUI-CE under
+   **Settings → Secrets and variables → Actions → Secrets** as
+   `RECONSTRUCTION_MIRROR_TOKEN`.
+3. In the same settings under **Variables**, set `RECONSTRUCTION_MIRROR_REPO`
+   to the destination's `owner/repo`, for example `shyamhz/gpui-reconstruction`.
+4. Once the workflow is on GPUI-CE `main`, run **Publish reconstruction
+   mirror** manually from the Actions tab for the initial sync. Subsequent
+   pushes to `main` that touch `reconstruction/` publish automatically.
+
+The workflow exports the folder and its history with `git subtree split`.
+It only fast-forwards the destination's `main`. If someone commits directly
+to the mirror, the workflow fails rather than overwriting their work.

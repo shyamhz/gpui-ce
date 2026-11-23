@@ -1,0 +1,58 @@
+name: Publish reconstruction mirror
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'reconstruction/**'
+      - '.github/workflows/reconstruction-mirror.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reconstruction-mirror
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' && (vars.RECONSTRUCTION_MIRROR_REPO != '' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Always publish the latest main, even if an earlier event ran later.
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Split reconstruction history
+        id: split
+        shell: bash
+        run: |
+          revision=$(git subtree split --quiet --prefix=reconstruction)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Push to the standalone repository
+        shell: bash
+        env:
+          MIRROR_REPO: ${{ vars.RECONSTRUCTION_MIRROR_REPO }}
+          GH_TOKEN: ${{ secrets.RECONSTRUCTION_MIRROR_TOKEN }}
+          REVISION: ${{ steps.split.outputs.revision }}
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          if [[ ! "$MIRROR_REPO" =~ ^[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+$ ||
+                "${MIRROR_REPO,,}" == "${GITHUB_REPOSITORY,,}" ]]; then
+            echo "::error::Set RECONSTRUCTION_MIRROR_REPO to a different GitHub repository (owner/name)."
+            exit 1
+          fi
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Set the RECONSTRUCTION_MIRROR_TOKEN Actions secret."
+            exit 1
+          fi
+
+          gh auth setup-git --hostname github.com
+          # Intentionally no force push: the destination must stay a mirror.
+          git push "https://github.com/${MIRROR_REPO}.git" "${REVISION}:refs/heads/main"
