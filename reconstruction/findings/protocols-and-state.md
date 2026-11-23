@@ -1,6 +1,7 @@
 # Protocols and State
 
-**Block B3a — event catalog.** B3b–B3d and phase validation are pending.
+**Blocks B3a–B3b — event catalog and state machines.** B3c–B3d and phase
+validation are pending.
 Code locations below are relative to the repository root.
 
 
@@ -123,7 +124,115 @@ reentrancy are B3b work, not guarantees implied by this catalog.
 
 ## State Machine
 
-Pending B3b–B3d. The gesture/popup and frame-reuse routes remain open.
+
+### S1. Window lifetime and frame publication
+
+**Observed fact.** `crates/gpui/src/app.rs:1558-1590,2235-2285` and
+`crates/gpui/src/window.rs:1710-1729,3218-3369`. See contracts C13–C16 and C25
+for element-facing behavior; the catalog above distinguishes close request from
+close notification.
+
+| State → state | Trigger and guard | Side effects / barrier |
+|---|---|---|
+| Absent → reserved → live | `open_window`; backend construction succeeds | Build and install root, draw synchronously, clear its arena token, store window, then return handle. Drawing is not presentation. |
+| Reserved → absent | Backend construction returns an error | Remove reserved slot and return error. |
+| Live → borrowed → live | Successful window lookup and take, then normal update return | The registry slot is temporarily empty during the callback. Restore it before the enclosing update flush. An unavailable slot does not supply a second mutable window. |
+| Borrowed → removed | Update marks window removed; native close callback can request removal | Remove handles and entity/window links, notify close observers, then consider quitting under `QuitMode`. |
+| Last rendered + building → published | Finish the new frame | Reconcile accessed state and finish the scene, snapshot old focus data, swap `rendered_frame` and `next_frame`, then clear the recycled frame. Focus notifications observe the newly published frame. Presentation is a separate operation. |
+
+### S2. Focus and queued application effects
+
+**Observed fact.** `crates/gpui/src/window.rs:2372-2404,3301-3354,6350-6420`
+and `crates/gpui/src/app.rs:1264-1283,2013-2075,2146-2179`. See contracts
+C15, C23 and C25.
+
+- Focus requests are ignored when disabled or already on that ID. An accepted
+  change updates the logical focus, bumps its generation, clears pending keys
+  and requests refresh. Blur clears pending input and removes focus when
+  enabled. The rendered dispatch path is a separate snapshot: after the frame
+  swap, compare old/new paths and active state to notify listeners. A focus
+  change made by those listeners can request another draw.
+
+- An update increments nesting depth. On normal exit, the outermost update
+  starts the drain unless a drain is already active. Each iteration releases
+  dropped entities and focus handles, then pops the oldest queued effect.
+  Callbacks can enqueue more work for the same drain. `Notify` deduplicates
+  pending entries by entity, and global notifications by type; `Emit` is not
+  deduplicated by that queue insertion logic. Notify removes its pending mark
+  before delivery, so a new notification during delivery is not suppressed
+  merely because an earlier one ran. This is not a panic-recovery guarantee.
+
+### S3. Element traversal and frame-index ownership (`mech-CF1`)
+
+**Observed fact.** `crates/gpui/src/element.rs:579-605,670-700,825-950`;
+`crates/gpui/src/view.rs:539-557,595-607,644-660`;
+`crates/gpui/src/window.rs:1273-1284,3235-3252,3296-3309,3650-3774,3793-3863`;
+`crates/gpui/src/key_dispatch.rs:100-107,264-307`. See contracts C13–C15 and C19.
+
+1. An element starts unmeasured, requests layout, may compute/recompute
+   its root layout, then prepaints and paints. Guards reject repeated or
+   out-of-order calls; repeated root measurement can reuse a result under
+   the same available space.
+
+2. A cached view can reuse prepaint when there is no fresh element, its
+   cache key matches (bounds, mask, text style, direction and bidi), the view
+   is not dirty, and refresh is not forcing a rebuild. Reuse reads ranges
+   from `rendered_frame`, appends to `next_frame`, and replaces stored ranges
+   with their new destinations. Paint similarly records its new span on
+   both fresh and reuse paths.
+
+3. Deferred prepaint keeps its vector in place while running nested rounds;
+   snapshots use that vector's indices. Deferred entries copied from the old
+   frame remap `parent_node` into the copied dispatch subtree and rewrite
+   their own prepaint/paint spans as processed. Input-handler transfer uses
+   an empty slot rather than removing an indexed entry. Unused old records
+   are cleared at frame rotation.
+
+**Strong inference — disposition for F1.2:** On the traced normal path,
+source ranges belong to the currently rendered frame and destination ranges
+are rebased before publication. The unguarded subtraction does not itself
+prove reachable stale inputs. Preserve frame ownership and node membership
+as reconstruction invariants; checked conversions remain a defensive port
+choice, not a confirmed defect fix. No exhaustive proof of every producer
+or invalidation branch, and no execution evidence is claimed.
+
+### S4. Touch claiming, cancellation, and momentum (`contracts-CF1`)
+
+**Observed fact.** `crates/gpui/src/gestures.rs:513-551,591-704,728-880,891-1004`
+and `crates/gpui/src/window.rs:6088-6188`. See contracts C27 and C33.
+
+| State → state | Input and guard | Output |
+|---|---|---|
+| Idle → pending | Start a contact without a fling to catch | Keep contact ID, start point, deadline, and offer flags. |
+| Pending → touch-drag or long-press | Matching contact offered once and the routed `Started` event prevents default | Claim interaction; subsequent movement/end/cancel follows that kind. Declined offer leaves it pending. Drag is offered at contact start; long press is offered by a timer while still eligible. |
+| Pending → panning | Matching movement exceeds slop | Choose dominant axis, include accumulated movement in the initial scroll, and use prediction only for presentation correction. |
+| Pending → idle | Matching release / cancel | Release synthesizes a pointer down/up pair; cancel emits no tap. |
+| Panning → idle, with optional momentum | Matching release | Emit `Ended` scroll at the starting position; momentum requires sufficient recent speed and nonzero fling duration. |
+| Claimed → idle | Matching release | Emit `Ended` for the claimed gesture rather than synthesizing a tap. |
+| Panning / claimed → idle | Matching cancel | Emit that stream's `Cancelled` event; no tap or new fling. Other contact IDs do not finish the active state. |
+| Momentum → momentum / finished | Tick evaluates curve against elapsed time | Emit nonnegative distance increments along the stored direction, with `Moved` until the terminal `Ended`. A new contact catches momentum: finish the old stream and start a pan immediately rather than a tap candidate. |
+
+This is the window's recognizer path, not a guarantee that every host emits raw
+touch or that all raw touches target a fixed element. The contact state and
+optional momentum are separate fields.
+
+### S5. Wayland anchored popup configure and dismissal (`contracts-CF1`)
+
+**Observed fact.** `crates/gpui_linux/src/linux/wayland/client.rs:1074-1098,1644-1666`
+and `crates/gpui_linux/src/linux/wayland/window.rs:1128-1179,1396-1420`.
+See contract C37 for parent resolution, press serial selection, and other
+adapters' unsupported result.
+
+- Open against an existing parent or return an error. A configured grab is
+  supplied only when the adapter has a nonzero press serial; that is a request,
+  not evidence that a compositor granted it.
+- `xdg_popup.configure` stages a size if positive on both axes; it does not
+  apply the event's position. `xdg_surface.configure(serial)` consumes staged
+  state, applies applicable size changes and acknowledges the configure.
+  `Repositioned` does not apply geometry by itself.
+- `PopupDone` causes the adapter to call `window.close()` and enter the normal
+  close path. An event with no matching registered window is ignored.
+  These are callback reactions, not an assertion of compositor event timing.
 
 
 ## Persistent Schema Notes
@@ -146,13 +255,16 @@ establish the absence of other persisted formats.
 - **Inspected:** complete normalized input enum and nested file-drop payloads;
   representative adapter producers; callback signatures, mouse dispatch order,
   and application effect types.
-- **Skipped:** exhaustive per-adapter event conversion, IME sequencing, state
-  machine transitions, frame scheduling/recovery, and persisted schemas.
+- **Inspected (B3b):** window registry lifetime, redraw publication, focus and
+  effect flushing, element/frame reuse, touch claims and momentum, and Wayland
+  popup event handling.
+- **Skipped:** exhaustive per-adapter event conversion, IME sequencing, full
+  renderer/executor flows, frame scheduling/recovery, and persisted schemas.
 - **Evidence basis:** source inspection, with completed architecture and
   contracts outputs for context. No runtime tests or traces were run.
-- **Known blind spots:** observed pacing, platform-specific emission
-  differences, gesture arbitration, popup lifecycle, and frame-cache ownership.
-- **Coverage disposition:** PARTIAL — B3a only.
+- **Known blind spots:** observed pacing, platform-specific emission, and
+  exhaustive frame-cache invalidation across all producers and rollback paths.
+- **Coverage disposition:** PARTIAL — B3a and B3b recorded.
 
 
 ## Open Questions
@@ -164,12 +276,12 @@ unverified. No question is closed here.
 
 ## Carry-Forward
 
-`mech-CF1` (frame reuse) and `contracts-CF1` (gesture and Wayland popup
-lifecycle) remain assigned to the protocols phase. B3a is not their closure.
+Responses recorded in S3–S5. These do not close the independent runtime
+questions. Framework carry-forward closure awaits the protocols phase handoff.
 
 
 ## Validation
 
-Phase validation pending B3b–B3d. B3a block check: all 14 normalized input
-variants accounted for, boundary carriers identified, and static facts separated
-from runtime claims.
+Phase validation pending B3c–B3d. B3a checked all 14 input variants against
+source. B3b recorded guarded transitions and distinguished frame publication,
+effect draining, and native configuration acknowledgements.
