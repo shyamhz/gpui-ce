@@ -7,6 +7,8 @@ gates, handoffs); this folder is the record a person reviews and git tracks.
 ## Reimplementation guides
 
 Read these in order; use the phase findings for evidence and exact fixtures.
+See the [final verification report](verification/final-verification.md)
+for what was checked, what failed, and what remains unresolved.
 
 1. [A. System Architecture](guides/A-system-architecture.md) — layer and build boundaries.
 2. [B. Runtime, Interaction & State](guides/B-runtime-interaction-state.md) — lifecycle, input, motion and scheduling.

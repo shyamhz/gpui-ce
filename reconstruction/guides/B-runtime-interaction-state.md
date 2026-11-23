@@ -24,6 +24,12 @@ mark before its callback so it can enqueue again. A callback may add work
 to the same drain; this is not a panic-recovery guarantee. Teardown must
 keep integrations alive while their dependent work is cancelled.
 
+**Reconstruction requirement.** A draw starts a new entity-access trace.
+Entity reads contribute dependencies; reused views also restore their
+recorded accesses. After publication replace the window's tracked
+dependencies, so future entity invalidations reach the views that used
+them. Resetting access tracking does not delete an entity or its observers.
+
 **Implementation choice — reference ownership.** The embedding handle
 borrows the UI app synchronously; its weak async counterpart can survive an
 await, but is not a message channel or worker-thread proxy. GPUI uses a
@@ -33,8 +39,10 @@ that particular borrowing mechanism.
 
 **Evidence:** [protocols S1–S2](../findings/protocols-and-state.md#state-machine),
 [architecture concurrency](../findings/architecture-map.md#concurrency-model);
-`crates/gpui/src/app.rs:193-215,327-345,878-882,1264-1283,1558-1592,2013-2075,2235-2285`,
-`crates/gpui/src/app/async_context.rs:57-69,238-250`.
+`crates/gpui/src/app.rs:193-215,327-345,878-882,1264-1283,1344-1369,1558-1592,2013-2075,2235-2285`,
+`crates/gpui/src/app/async_context.rs:57-69,238-250`,
+`crates/gpui/src/app/entity_map.rs:164-190`, `crates/gpui/src/view.rs:539-557`,
+`crates/gpui/src/window.rs:3227-3233,3341-3389`.
 
 ## Frame demand and task lifetime
 
@@ -106,6 +114,12 @@ cannot restore focus. Tab eligibility is explicit.
    typed character; cancellation or consumption can stop delivery. Ignore
    a stale focus prefix. Invalid binding strings are parse errors.
 
+On mismatch, remove the new key temporarily. Replay the longest complete
+binding prefix of the old pending keys, or one old key if no prefix
+matches. Reprocess the new key against the remaining suffix. Timeout
+repeatedly replays prefixes until none remain. Replay resolves at the
+focus path in effect for that dispatch; it is not guaranteed text insertion.
+
 **Evidence:** [contracts C21–C26](../findings/behavioral-contracts.md#apisdk--input-focus-and-keys-b2b)
 and [protocol catalog](../findings/protocols-and-state.md#event-catalog);
 `crates/gpui/src/interactive.rs:771-800`,
@@ -155,13 +169,13 @@ A = [[0, 1], [−ω², −2ζω]]
 x' = g + y'
 ```
 
-The reference uses the underdamped branch below `ζ = 1 − 10⁻⁴`, overdamped
-above `ζ = 1 + 10⁻⁴`, and critical in between. For a target ramp of velocity `u`, remove
-lag `−2ζu/ω` from displacement and subtract `u` from velocity before the
-step; restore both relative to the advanced target afterward. Settling
-requires both displacement within `ε` and velocity within `εω`; the
-default `ε` is `0.001`. Zero
-damping has no finite settling time. Default retargeting preserves current
+The reference uses the underdamped branch below `ζ = 1 − 10⁻⁴`,
+overdamped above `ζ = 1 + 10⁻⁴`, and critical in between. For a target
+ramp of velocity `u`, remove lag `−2ζu/ω` from displacement and subtract
+`u` from velocity before the step; restore both relative to the advanced
+target afterward. Settling requires both displacement within `ε` and
+velocity within `εω`; the default `ε` is `0.001`. Zero damping has no
+finite settling time. Default retargeting preserves current
 presentation and spring velocity; explicit restart/jump is different.
 Active evaluated transitions request another frame until settled. Synced
 animations use an app epoch, repeat loops the individual motion, cap

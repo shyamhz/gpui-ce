@@ -59,6 +59,9 @@ the six-field record (unknown, reason, bounded evidence, impact, blocking
 verdict and verification method). The three spikes are tracked in CodeCartographer
 and use the [approved procedures](../plan-blocks.md#b7a--runtime-spike-plans-executable).
 Completion of the framework phases does not close these questions.
+The separate [final verification report](../verification/final-verification.md)
+records the core tests, the font-catalog follow-up and limits of the
+independent-implementation check.
 
 | ID | Decision not yet supported |
 |---|---|

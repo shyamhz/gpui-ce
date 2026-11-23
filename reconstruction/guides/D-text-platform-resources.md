@@ -35,6 +35,14 @@ data. Parley, platform font discovery and raster libraries may be replaced.
 Use fixed font fixtures; installed fonts and final pixels are not portable
 oracles. For the malformed-input policy see [E](E-implementation-verification.md#defect-dispositions).
 
+**UNRESOLVED — host font metrics after catalog enrichment.** The final
+audit observed a changed ascent after system fonts loaded, despite the
+registered face ID remaining stable in the checked fixture. An isolated,
+empty Fontconfig catalog did not reproduce the failure. Do not require
+metric stability under arbitrary catalog changes. This does not block
+fixed-font shaping; see the [font audit ledger](../verification/final-verification.md#font-catalog-follow-up)
+for scope and the next comparison.
+
 **Evidence:** [contracts C28–C31](../findings/behavioral-contracts.md#apisdk--text-behavior-b2e)
 and [protocols S9](../findings/protocols-and-state.md#s9-document-shaping-and-inline-measurement);
 `crates/gpui/src/text_system/line_layout.rs:710-813,1123-1194`,
