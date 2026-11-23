@@ -1,7 +1,7 @@
 project_name: gpui-ce
 pipeline: workflow/pipeline-full-with-deep-audit.yaml
-current_phase: porting
-last_updated: "2026-11-23T14:18:00.774Z"
+current_phase: reimplementation-spec
+last_updated: "2026-11-23T14:23:38.383Z"
 schema_version: 1
 phases:
   architecture:
@@ -86,9 +86,16 @@ phases:
     open_questions: []
     carry_forward: []
   porting:
-    status: pending
-    owner_notes: []
-    outputs_present: []
+    status: complete
+    owner_notes:
+      - "Completed via codecarto_complete."
+      - "Primary output: .codecarto/findings/porting/reverse-engineering-bundle.md"
+      - "Validation: PASS"
+      - "B5 synthesizes the architecture, C1–C38, protocols and all eleven audited defects with an evidence-tagged source index and targeted deep-read triggers."
+      - "Retained all five secondary references. No runtime tests run; headless parity, GPU fallback and delivered frame pacing remain open for B7a."
+      - "Use protocols S3/S4/S9 and semantic 5.1–5.3 to resolve the noted source/documentation differences when drafting the specification."
+    outputs_present:
+      - findings/porting/reverse-engineering-bundle.md
     open_questions: []
     carry_forward: []
   reimplementation-spec:
@@ -98,7 +105,7 @@ phases:
     open_questions: []
     carry_forward: []
 next_actions:
-  - "Begin porting phase by producing findings/porting/reverse-engineering-bundle.md"
+  - "Begin reimplementation-spec phase by producing findings/reimplementation-spec/reimplementation-spec.md"
 post_pipeline:
   -
     id: post-frame-capture
